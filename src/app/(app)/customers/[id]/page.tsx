@@ -1,0 +1,76 @@
+"use client"
+
+import { useMemo, useState } from "react"
+import Link from "next/link"
+import { useParams, useRouter } from "next/navigation"
+import { useQuery } from "@tanstack/react-query"
+import { useTranslation } from "react-i18next"
+import { ArrowLeft, Pencil, Trash2 } from "lucide-react"
+import { PageHeader } from "@/components/shared/page-header"
+import { RequirePermission } from "@/components/shared/require-permission"
+import { EntityDialog, type FieldDef } from "@/components/shared/entity-dialog"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { Money } from "@/components/shared/money"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge, Skeleton } from "@/components/ui/misc"
+import { useMe } from "@/hooks/use-me"
+import { useCrud } from "@/hooks/use-crud"
+import { useLocale } from "@/components/providers/locale-provider"
+import { api } from "@/lib/api-client"
+import { updateCustomerSchema } from "@/utils/validation"
+import type { z } from "zod"
+
+interface Customer { id: string; name: string; phone: string | null; email: string | null; address: string | null; notes: string | null; loyaltyPoints: number; totalSpending: number; outstandingBalance: number; isActive: boolean; createdAt: string; sales: { id: string; saleNumber: string; total: number; status: string; createdAt: string; _count: { items: number }; payments: { method: string }[] }[]; stats: { orderCount: number; averageOrder: number; lastPurchaseAt: string | null } }
+type In = z.input<typeof updateCustomerSchema>
+
+export default function CustomerDetailPage() {
+  const { t } = useTranslation()
+  const { id } = useParams<{ id: string }>()
+  const router = useRouter()
+  const { can } = useMe()
+  const { formatDateTime, formatDate } = useLocale()
+  const [edit, setEdit] = useState(false)
+  const [del, setDel] = useState(false)
+  const q = useQuery({ queryKey: ["customer", id], queryFn: () => api.get<Customer>(`/api/customers/${id}`) })
+  const c = q.data
+  const crud = useCrud<never, In>("/api/customers", [["customers"], ["customer", id]])
+
+  const fields: FieldDef<In>[] = useMemo(() => [
+    { name: "name", label: t("common.name"), required: true, colSpan: 2 },
+    { name: "phone", label: t("common.phone"), type: "tel" },
+    { name: "email", label: t("common.email"), type: "email" },
+    { name: "address", label: t("common.address"), colSpan: 2 },
+    { name: "notes", label: t("common.notes"), type: "textarea" },
+    { name: "isActive", label: t("common.active"), type: "switch" },
+  ], [t])
+  const defaults = useMemo<In>(() => ({ name: c?.name ?? "", phone: c?.phone ?? "", email: c?.email ?? "", address: c?.address ?? "", notes: c?.notes ?? "", isActive: c?.isActive ?? true }), [c])
+
+  return (
+    <RequirePermission permission="customer.view">
+      <PageHeader title={c?.name ?? t("customers.title")} description={c ? [c.phone, c.email, c.address].filter(Boolean).join(" · ") : undefined} actions={<>
+        <Button variant="ghost" asChild><Link href="/customers"><ArrowLeft className="h-4 w-4 rtl:rotate-180" />{t("common.back")}</Link></Button>
+        {can("customer.manage") ? <><Button variant="outline" onClick={() => setEdit(true)}><Pencil className="h-4 w-4" />{t("common.edit")}</Button><Button variant="destructive" onClick={() => setDel(true)}><Trash2 className="h-4 w-4" /></Button></> : null}
+      </>} />
+      {q.isLoading || !c ? <Skeleton className="h-96" /> : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card><CardHeader><CardTitle>{t("common.details")}</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">{t("customers.totalSpending")}</span><Money value={c.totalSpending} className="font-semibold" /></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">{t("customers.orders")}</span><span>{c.stats.orderCount}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">{t("customers.avgOrder")}</span><Money value={c.stats.averageOrder} /></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">{t("customers.loyalty")}</span><span>{c.loyaltyPoints}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">{t("customers.balance")}</span><Money value={c.outstandingBalance} /></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">{t("customers.lastPurchase")}</span><span>{c.stats.lastPurchaseAt ? formatDate(c.stats.lastPurchaseAt) : "—"}</span></div>
+            {c.notes ? <p className="pt-2 border-t text-muted-foreground whitespace-pre-wrap">{c.notes}</p> : null}
+          </CardContent></Card>
+          <Card className="lg:col-span-2"><CardHeader><CardTitle>{t("customers.history")}</CardTitle></CardHeader><CardContent className="divide-y text-sm max-h-[560px] overflow-y-auto scrollbar-thin">
+            {c.sales.map((s) => <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between py-2 gap-3 hover:text-primary"><div><p className="font-mono font-medium">{s.saleNumber}</p><p className="text-xs text-muted-foreground">{formatDateTime(s.createdAt)} · {t("pos.items", { count: s._count.items })} · {[...new Set(s.payments.map((p) => t(`pos.methods.${p.method}`)))].join(", ")}</p></div><div className="text-end"><Money value={s.total} className="font-medium" />{s.status !== "COMPLETED" ? <Badge variant={s.status === "CANCELLED" ? "destructive" : "warning"} className="ms-2">{t(`sales.status.${s.status}`)}</Badge> : null}</div></Link>)}
+            {!c.sales.length ? <p className="py-6 text-center text-muted-foreground">{t("sales.noSales")}</p> : null}
+          </CardContent></Card>
+        </div>
+      )}
+      <EntityDialog open={edit} onOpenChange={setEdit} title={t("customers.edit")} schema={updateCustomerSchema} fields={fields} defaultValues={defaults} submitting={crud.update.isPending} onSubmit={async (v) => { await crud.update.mutateAsync({ id, body: v }); setEdit(false) }} />
+      <ConfirmDialog open={del} onOpenChange={setDel} loading={crud.remove.isPending} onConfirm={() => crud.remove.mutate(id, { onSuccess: () => router.push("/customers") })} />
+    </RequirePermission>
+  )
+}

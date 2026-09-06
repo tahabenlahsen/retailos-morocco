@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+test-results
+playwright-report
+coverage
+eslint-report.json
+scripts/inspect.mjs
+.next-build

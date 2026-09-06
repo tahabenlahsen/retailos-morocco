@@ -1,0 +1,718 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS (SQLite doesn't support enums, using String with validation)
+// ============================================================
+
+// We'll use String fields with validation in the application layer
+// instead of enums for SQLite compatibility
+
+// UserStatus: ACTIVE, INACTIVE, SUSPENDED, PENDING_VERIFICATION
+// BusinessType: MINI_MARKET, GROCERY, CLOTHING, ELECTRONICS, COSMETICS, RESTAURANT, PHARMACY, OTHER
+// BusinessStatus: ACTIVE, INACTIVE, SUSPENDED, TRIAL
+// SubscriptionPlan: FREE, BASIC, PROFESSIONAL, ENTERPRISE
+// MovementType: SALE, PURCHASE, RETURN, ADJUSTMENT, TRANSFER, DAMAGE, LOSS
+// SaleStatus: DRAFT, COMPLETED, CANCELLED, REFUNDED
+// PaymentStatus: PENDING, PARTIALLY_PAID, PAID, REFUNDED
+// PaymentMethod: CASH, CARD, BANK_TRANSFER, CHECK, OTHER
+// RefundStatus: PENDING, APPROVED, REJECTED, COMPLETED
+// RegisterStatus: OPEN, CLOSED
+// TransactionType: SALE, REFUND, WITHDRAWAL, DEPOSIT, ADJUSTMENT
+// PurchaseStatus: DRAFT, ORDERED, PARTIALLY_RECEIVED, RECEIVED, CANCELLED
+// NotificationType: LOW_STOCK, OUT_OF_STOCK, LARGE_EXPENSE, SALES_DECREASE, REGISTER_DISCREPANCY, PURCHASE_RECEIVED, SYSTEM, OTHER
+
+// ============================================================
+// CORE MODELS
+// ============================================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  avatar        String?
+  emailVerified DateTime?
+  status        String    @default("ACTIVE")
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  businessId          String
+  business            Business             @relation(fields: [businessId], references: [id])
+  roleId              String
+  role                Role                 @relation("UserRole", fields: [roleId], references: [id])
+  stores              UserStore[]
+  passwordResetTokens PasswordResetToken[]
+  heldCarts           HeldCart[]
+
+  @@index([email])
+  @@index([businessId])
+  @@index([status])
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model HeldCart {
+  id         String   @id @default(uuid())
+  label      String?
+  items      String // JSON: [{productId, quantity, unitPrice, discount}]
+  customerId String?
+  createdAt  DateTime @default(now())
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  storeId    String
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([businessId, storeId])
+  @@map("held_carts")
+}
+
+model Business {
+  id                 String    @id @default(uuid())
+  name               String
+  type               String
+  ownerName          String
+  phone              String
+  email              String
+  city               String
+  address            String?
+  currency           String    @default("MAD")
+  taxRate            Float     @default(0.2)
+  logo               String?
+  status             String    @default("ACTIVE")
+  subscriptionPlan   String    @default("FREE")
+  subscriptionEndsAt DateTime?
+  onboarded          Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  // Relations
+  users                    User[]
+  stores                   Store[]
+  heldCarts                HeldCart[]
+  categories               Category[]
+  brands                   Brand[]
+  suppliers                Supplier[]
+  customers                Customer[]
+  products                 Product[]
+  expenses                 Expense[]
+  auditLogs                AuditLog[]
+  notifications            Notification[]
+  expenseCategories        ExpenseCategory[]
+  inventoryMovements       InventoryMovement[]
+  sales                    Sale[]
+  payments                 Payment[]
+  refunds                  Refund[]
+  cashRegisters            CashRegister[]
+  cashRegisterTransactions CashRegisterTransaction[]
+  purchaseOrders           PurchaseOrder[]
+
+  @@index([status])
+  @@index([subscriptionPlan])
+  @@map("businesses")
+}
+
+model Store {
+  id        String    @id @default(uuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  city      String
+  size      Float? // in square meters
+  openTime  String?
+  closeTime String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  businessId               String
+  business                 Business                  @relation(fields: [businessId], references: [id])
+  users                    UserStore[]
+  products                 Product[]
+  sales                    Sale[]
+  cashRegisters            CashRegister[]
+  expenses                 Expense[]
+  purchaseOrders           PurchaseOrder[]
+  inventoryMovements       InventoryMovement[]
+  payments                 Payment[]
+  refunds                  Refund[]
+  cashRegisterTransactions CashRegisterTransaction[]
+
+  @@index([businessId])
+  @@index([isActive])
+  @@map("stores")
+}
+
+// Roles are system-defined (OWNER, ADMIN, MANAGER, CASHIER, INVENTORY_MANAGER, ACCOUNTANT).
+// The permission matrix lives in src/lib/permissions.ts so it is versioned with code.
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  users       User[]   @relation("UserRole")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("roles")
+}
+
+model UserStore {
+  id        String   @id @default(uuid())
+  userId    String
+  storeId   String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id])
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([userId, storeId])
+  @@index([userId])
+  @@index([storeId])
+  @@map("user_stores")
+}
+
+// ============================================================
+// PRODUCT & INVENTORY MODELS
+// ============================================================
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  parentId    String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  businessId String
+  business   Business   @relation(fields: [businessId], references: [id])
+  parent     Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children   Category[] @relation("CategoryHierarchy")
+  products   Product[]
+
+  @@index([businessId])
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Brand {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  logo        String?
+  website     String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id])
+  products   Product[]
+
+  @@index([businessId])
+  @@map("brands")
+}
+
+model Product {
+  id            String    @id @default(uuid())
+  name          String
+  sku           String
+  barcode       String?
+  description   String?
+  image         String?
+  purchasePrice Float
+  sellingPrice  Float
+  taxRate       Float     @default(0.2)
+  stockQuantity Int       @default(0)
+  minimumStock  Int       @default(0)
+  maximumStock  Int?
+  unit          String    @default("piece")
+  isActive      Boolean   @default(true)
+  costPrice     Float? // Average cost for COGS calculation
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store     @relation(fields: [storeId], references: [id])
+  categoryId String
+  category   Category  @relation(fields: [categoryId], references: [id])
+  brandId    String?
+  brand      Brand?    @relation(fields: [brandId], references: [id])
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+
+  // Transaction relations
+  saleItems          SaleItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+  inventoryMovements InventoryMovement[]
+
+  @@unique([storeId, sku])
+  @@unique([storeId, barcode])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([categoryId])
+  @@index([barcode])
+  @@index([sku])
+  @@index([isActive])
+  @@map("products")
+}
+
+model InventoryMovement {
+  id               String   @id @default(uuid())
+  productId        String
+  product          Product  @relation(fields: [productId], references: [id])
+  quantity         Int
+  previousQuantity Int
+  newQuantity      Int
+  type             String
+  reason           String?
+  referenceId      String? // ID of related document (sale, purchase, etc.)
+  referenceType    String? // Type of related document
+  createdAt        DateTime @default(now())
+
+  // Relations
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id])
+  userId     String?
+
+  @@index([businessId])
+  @@index([storeId])
+  @@index([productId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("inventory_movements")
+}
+
+// ============================================================
+// SALES & PAYMENT MODELS
+// ============================================================
+
+model Sale {
+  id             String    @id @default(uuid())
+  saleNumber     String
+  idempotencyKey String?   @unique
+  subtotal       Float
+  taxAmount      Float
+  discountAmount Float     @default(0)
+  total          Float
+  profit         Float?
+  status         String    @default("COMPLETED")
+  paymentStatus  String    @default("PAID")
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  // Relations
+  businessId     String
+  business       Business      @relation(fields: [businessId], references: [id])
+  storeId        String
+  store          Store         @relation(fields: [storeId], references: [id])
+  customerId     String?
+  customer       Customer?     @relation(fields: [customerId], references: [id])
+  userId         String
+  cashRegisterId String?
+  cashRegister   CashRegister? @relation(fields: [cashRegisterId], references: [id])
+
+  // Transaction relations
+  items    SaleItem[]
+  payments Payment[]
+  refunds  Refund[]
+
+  @@unique([businessId, saleNumber])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([customerId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([saleNumber])
+  @@map("sales")
+}
+
+model SaleItem {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Float
+  taxRate   Float
+  discount  Float    @default(0)
+  subtotal  Float
+  taxAmount Float
+  total     Float
+  profit    Float?
+  createdAt DateTime @default(now())
+
+  // Relations
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id])
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  amount    Float
+  method    String
+  reference String? // Transaction reference, card number, etc.
+  status    String   @default("PAID")
+  notes     String?
+  createdAt DateTime @default(now())
+
+  // Relations
+  saleId     String
+  sale       Sale     @relation(fields: [saleId], references: [id])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id])
+  userId     String
+
+  @@index([saleId])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([method])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+model Refund {
+  id            String    @id @default(uuid())
+  refundNumber  String
+  amount        Float
+  reason        String?
+  items         String // JSON: [{saleItemId, productId, quantity, amount}]
+  paymentMethod String    @default("CASH")
+  status        String    @default("COMPLETED")
+  refundedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  saleId     String
+  sale       Sale     @relation(fields: [saleId], references: [id])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id])
+  userId     String
+
+  @@unique([businessId, refundNumber])
+  @@index([saleId])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([status])
+  @@map("refunds")
+}
+
+model CashRegister {
+  id               String    @id @default(uuid())
+  name             String
+  openingBalance   Float
+  closingBalance   Float?
+  expectedBalance  Float?
+  actualBalance    Float?
+  difference       Float?
+  differenceReason String?
+  status           String    @default("OPEN")
+  openedAt         DateTime  @default(now())
+  closedAt         DateTime?
+  openedBy         String
+  closedBy         String?
+
+  // Relations
+  businessId   String
+  business     Business                  @relation(fields: [businessId], references: [id])
+  storeId      String
+  store        Store                     @relation(fields: [storeId], references: [id])
+  sales        Sale[]
+  transactions CashRegisterTransaction[]
+
+  @@index([businessId])
+  @@index([storeId])
+  @@index([status])
+  @@index([openedAt])
+  @@map("cash_registers")
+}
+
+model CashRegisterTransaction {
+  id        String   @id @default(uuid())
+  type      String
+  amount    Float
+  reason    String?
+  createdAt DateTime @default(now())
+
+  // Relations
+  cashRegisterId String
+  cashRegister   CashRegister @relation(fields: [cashRegisterId], references: [id])
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id])
+  storeId        String
+  store          Store        @relation(fields: [storeId], references: [id])
+  userId         String
+
+  @@index([cashRegisterId])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("cash_register_transactions")
+}
+
+// ============================================================
+// PURCHASE & SUPPLIER MODELS
+// ============================================================
+
+model Supplier {
+  id             String    @id @default(uuid())
+  name           String
+  phone          String?
+  email          String?
+  address        String?
+  taxNumber      String?
+  creditLimit    Float?
+  currentBalance Float     @default(0)
+  isActive       Boolean   @default(true)
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  // Relations
+  businessId     String
+  business       Business        @relation(fields: [businessId], references: [id])
+  products       Product[]
+  purchaseOrders PurchaseOrder[]
+
+  @@index([businessId])
+  @@index([isActive])
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id               String    @id @default(uuid())
+  orderNumber      String
+  supplierId       String
+  supplier         Supplier  @relation(fields: [supplierId], references: [id])
+  subtotal         Float
+  taxAmount        Float
+  total            Float
+  status           String    @default("DRAFT")
+  expectedDelivery DateTime?
+  deliveredAt      DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  // Relations
+  businessId String
+  business   Business            @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store               @relation(fields: [storeId], references: [id])
+  userId     String
+  items      PurchaseOrderItem[]
+
+  @@unique([businessId, orderNumber])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([supplierId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id               String   @id @default(uuid())
+  productId        String
+  product          Product  @relation(fields: [productId], references: [id])
+  quantity         Int
+  receivedQuantity Int      @default(0)
+  unitPrice        Float
+  taxRate          Float
+  subtotal         Float
+  taxAmount        Float
+  total            Float
+  createdAt        DateTime @default(now())
+
+  // Relations
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+  @@map("purchase_order_items")
+}
+
+// ============================================================
+// CUSTOMER & EXPENSE MODELS
+// ============================================================
+
+model Customer {
+  id                 String    @id @default(uuid())
+  name               String
+  phone              String?
+  email              String?
+  address            String?
+  loyaltyPoints      Int       @default(0)
+  totalSpending      Float     @default(0)
+  outstandingBalance Float     @default(0)
+  notes              String?
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  // Relations
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  sales      Sale[]
+
+  @@index([businessId])
+  @@index([phone])
+  @@index([isActive])
+  @@map("customers")
+}
+
+model Expense {
+  id            String          @id @default(uuid())
+  amount        Float
+  categoryId    String
+  category      ExpenseCategory @relation(fields: [categoryId], references: [id])
+  description   String?
+  date          DateTime        @default(now())
+  paymentMethod String
+  receipt       String?
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id])
+  userId     String
+
+  @@index([businessId])
+  @@index([storeId])
+  @@index([categoryId])
+  @@index([date])
+  @@map("expenses")
+}
+
+model ExpenseCategory {
+  id          String    @id @default(uuid())
+  name        String
+  code        String? // Stable key for system categories (RENT, ELECTRICITY, ...) used for i18n
+  description String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id])
+  expenses   Expense[]
+
+  @@index([businessId])
+  @@map("expense_categories")
+}
+
+// ============================================================
+// SYSTEM MODELS
+// ============================================================
+
+model Notification {
+  id        String    @id @default(uuid())
+  type      String
+  title     String
+  message   String
+  data      String? // Additional data (JSON string)
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  userId     String
+
+  @@index([businessId])
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  entityType String
+  entityId   String
+  userId     String
+  businessId String
+  metadata   String? // JSON string
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+  @@index([userId])
+  @@index([entityType])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
