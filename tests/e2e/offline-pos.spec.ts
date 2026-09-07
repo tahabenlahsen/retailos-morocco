@@ -5,7 +5,7 @@ async function login(page: Page, email: string, password = "Demo12345") {
   await page.getByLabel(/email/i).fill(email)
   await page.getByLabel(/mot de passe|password/i).fill(password)
   await page.getByRole("button", { name: /se connecter|sign in/i }).click()
-  await page.waitForURL(/\/(dashboard|pos)/)
+  await page.waitForURL(/\/(dashboard|pos)/, { timeout: 30_000 })
 }
 
 async function waitForCatalog(page: Page) {

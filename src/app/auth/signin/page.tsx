@@ -29,9 +29,14 @@ function SignInForm() {
       setError(res.error === "RATE_LIMITED" ? t("auth.rateLimited") : res.error === "ACCOUNT_INACTIVE" ? t("auth.accountInactive") : t("auth.invalidCredentials"))
       return
     }
-    const cb = params.get("callbackUrl")
-    router.push(cb && cb.startsWith("/") ? cb : "/")
-    router.refresh()
+    if (res?.ok) {
+      // Use replace() so we don't leave /auth/signin in the history stack, and skip the
+      // separate router.refresh() — replace() already re-fetches server components, and a
+      // double navigation (push + refresh) was causing intermittent tablet login timeouts
+      // because the refresh could race with the proxy redirect from "/" to "/dashboard".
+      const cb = params.get("callbackUrl")
+      await router.replace(cb && cb.startsWith("/") ? cb : "/")
+    }
   }
 
   return (

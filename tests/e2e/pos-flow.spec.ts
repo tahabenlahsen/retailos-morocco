@@ -5,7 +5,10 @@ async function login(page: Page, email: string, password = "Demo12345") {
   await page.getByLabel(/email/i).fill(email)
   await page.getByLabel(/mot de passe|password/i).fill(password)
   await page.getByRole("button", { name: /se connecter|sign in/i }).click()
-  await page.waitForURL(/\/(dashboard|pos)/)
+  // Wait for the post-login redirect. The signin page uses router.replace("/") which the
+  // proxy redirects to /dashboard or /pos. Wait for either URL with a generous timeout
+  // to absorb first-compile latency in dev mode.
+  await page.waitForURL(/\/(dashboard|pos)/, { timeout: 30_000 })
 }
 
 test.describe("authentication", () => {
@@ -17,7 +20,7 @@ test.describe("authentication", () => {
     await expect(page.getByRole("alert")).toBeVisible()
     await page.getByLabel(/mot de passe|password/i).fill("Demo12345")
     await page.getByRole("button", { name: /se connecter|sign in/i }).click()
-    await page.waitForURL(/\/dashboard/)
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 })
     await expect(page.getByRole("heading", { level: 1 })).toContainText(/tableau de bord/i)
   })
 

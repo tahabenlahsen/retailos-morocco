@@ -8,6 +8,9 @@
 /test-results
 /playwright-report
 /blob-report
+
+# database backups (contain business data — never commit)
+/backups
 prisma/test.db*
 eslint-report.json
 

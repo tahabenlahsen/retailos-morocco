@@ -21,7 +21,9 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed/index.ts",
     "db:reset": "prisma db push --force-reset && tsx prisma/seed/index.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:backup": "node scripts/db-backup.mjs",
+    "db:restore": "node scripts/db-restore.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed/index.ts"
