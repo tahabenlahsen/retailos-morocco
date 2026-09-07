@@ -48,6 +48,17 @@ export default function PosPage() {
 
   const register = useQuery({ queryKey: ["register", "open", posStoreId], queryFn: () => api.get<{ id: string } | null>("/api/register", { storeId: posStoreId }), enabled: !!posStoreId, refetchInterval: 60_000 })
   const held = useQuery({ queryKey: ["held-carts", posStoreId], queryFn: () => api.get<HeldCart[]>("/api/pos/held-carts", { storeId: posStoreId }), enabled: !!posStoreId })
+  // Fresh credit standing of the attached customer while the payment dialog is open (balance may have changed on another till).
+  const customerId = cart.state.customer?.id
+  const creditQ = useQuery({
+    queryKey: ["customers", customerId, "credit"],
+    queryFn: () => api.get<{ name: string; creditLimit: number | null; outstandingBalance: number }>(`/api/customers/${customerId}`),
+    enabled: payOpen && !!customerId,
+    staleTime: 0,
+  })
+  const creditInfo = cart.state.customer
+    ? { customerName: cart.state.customer.name, creditLimit: creditQ.data?.creditLimit ?? cart.state.customer.creditLimit ?? null, outstandingBalance: creditQ.data?.outstandingBalance ?? cart.state.customer.outstandingBalance ?? 0 }
+    : undefined
 
   const createSale = useMutation({
     mutationFn: (payments: PaymentLine[]) =>
@@ -60,6 +71,7 @@ export default function PosPage() {
       toast.success(`${t("pos.saleComplete")} · ${sale.saleNumber}`)
       void qc.invalidateQueries({ queryKey: ["pos-products"] })
       void qc.invalidateQueries({ queryKey: ["register"] })
+      void qc.invalidateQueries({ queryKey: ["customers"] })
     },
     onError: (err) => {
       // Refresh stock on insufficient-stock errors so the cart reflects reality
@@ -91,8 +103,8 @@ export default function PosPage() {
         notes: "",
       }
       if (h.customerId) {
-        const c = await api.get<{ id: string; name: string }>(`/api/customers/${h.customerId}`).catch(() => null)
-        if (c) state.customer = { id: c.id, name: c.name }
+        const c = await api.get<{ id: string; name: string; creditLimit: number | null; outstandingBalance: number }>(`/api/customers/${h.customerId}`).catch(() => null)
+        if (c) state.customer = { id: c.id, name: c.name, creditLimit: c.creditLimit, outstandingBalance: c.outstandingBalance }
       }
       cart.dispatch({ type: "replace", state })
       await deleteHeld.mutateAsync(h.id)
@@ -155,7 +167,7 @@ export default function PosPage() {
         </aside>
       </div>
 
-      <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={cart.totals.total} registerOpen={registerOpen} onConfirm={(p) => createSale.mutateAsync(p).then(() => undefined, () => undefined)} />
+      <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={cart.totals.total} registerOpen={registerOpen} credit={creditInfo} canCredit={can("sale.credit")} onConfirm={(p) => createSale.mutateAsync(p).then(() => undefined, () => undefined)} />
       <CustomerPicker open={customerOpen} onOpenChange={setCustomerOpen} onSelect={(c) => cart.dispatch({ type: "setCustomer", customer: c })} />
 
       {/* Hold prompt */}

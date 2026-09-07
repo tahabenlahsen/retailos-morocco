@@ -14,7 +14,8 @@ export interface ReceiptSale {
   total: number
   status: string
   items: { id: string; quantity: number; unitPrice: number; discount: number; total: number; product: { name: string; sku: string; unit: string } }[]
-  payments: { method: string; amount: number; reference: string | null }[]
+  paymentStatus?: string
+  payments: { method: string; amount: number; reference: string | null; settledAmount?: number }[]
   refunds?: { refundNumber: string; amount: number; createdAt: string }[]
   customer: { name: string; phone: string | null } | null
   store: { name: string; address: string | null; phone: string | null }
@@ -64,6 +65,9 @@ export function Receipt({ sale }: { sale: ReceiptSale }) {
       {sale.payments.map((p, i) => (
         <div key={i} className="flex justify-between"><span>{t(`pos.methods.${p.method}`)}{p.reference ? ` (${p.reference})` : ""}</span><span>{m(p.amount)}</span></div>
       ))}
+      {sale.payments.some((p) => p.method === "CREDIT") ? (
+        <p className="mt-1 text-center font-bold">{t("pos.creditDue")}: {m(sale.payments.filter((p) => p.method === "CREDIT").reduce((a, p) => a + p.amount, 0))}</p>
+      ) : null}
       {sale.refunds?.length ? (
         <>
           <div className="my-2 border-t border-dashed border-black" />

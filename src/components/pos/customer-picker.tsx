@@ -12,9 +12,12 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { api } from "@/lib/api-client"
 import { useApiError } from "@/hooks/use-api-error"
 
-interface Customer { id: string; name: string; phone: string | null; loyaltyPoints: number }
+import { Money } from "@/components/shared/money"
+import type { CartCustomer } from "./cart-store"
 
-type PickerProps = { open: boolean; onOpenChange: (o: boolean) => void; onSelect: (c: { id: string; name: string }) => void }
+interface Customer { id: string; name: string; phone: string | null; loyaltyPoints: number; outstandingBalance?: number; creditLimit?: number | null }
+
+type PickerProps = { open: boolean; onOpenChange: (o: boolean) => void; onSelect: (c: CartCustomer) => void }
 
 export function CustomerPicker({ open, onOpenChange, onSelect }: PickerProps) {
   // Content is remounted on every open, so search/create state starts fresh.
@@ -39,7 +42,7 @@ function PickerContent({ onOpenChange, onSelect }: Omit<PickerProps, "open">) {
     mutationFn: () => api.post<Customer>("/api/customers", { name: newName.trim(), phone: newPhone.trim() || undefined }),
     onSuccess: (c) => {
       void qc.invalidateQueries({ queryKey: ["customers"] })
-      onSelect({ id: c.id, name: c.name })
+      onSelect({ id: c.id, name: c.name, creditLimit: c.creditLimit ?? null, outstandingBalance: c.outstandingBalance ?? 0 })
       onOpenChange(false)
     },
     onError: showError,
@@ -65,9 +68,10 @@ function PickerContent({ onOpenChange, onSelect }: Omit<PickerProps, "open">) {
             </div>
             <div className="max-h-80 overflow-y-auto scrollbar-thin space-y-1">
               {q.data?.length ? q.data.map((c) => (
-                <button key={c.id} onClick={() => { onSelect({ id: c.id, name: c.name }); onOpenChange(false) }} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-start text-sm hover:bg-accent cursor-pointer">
+                <button key={c.id} onClick={() => { onSelect({ id: c.id, name: c.name, creditLimit: c.creditLimit ?? null, outstandingBalance: c.outstandingBalance ?? 0 }); onOpenChange(false) }} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-start text-sm hover:bg-accent cursor-pointer">
                   <User className="h-4 w-4 text-muted-foreground" />
                   <span className="flex-1 truncate font-medium">{c.name}</span>
+                  {(c.outstandingBalance ?? 0) > 0 ? <span className="text-xs text-amber-700 dark:text-amber-300">{t("customers.owes")} <Money value={c.outstandingBalance ?? 0} /></span> : null}
                   <span className="text-xs text-muted-foreground" dir="ltr">{c.phone ?? ""}</span>
                 </button>
               )) : !q.isLoading ? <EmptyState icon={User} title={t("customers.noCustomers")} className="py-6" /> : null}

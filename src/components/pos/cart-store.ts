@@ -23,9 +23,17 @@ export interface CartLine {
   discount: number
 }
 
+export interface CartCustomer {
+  id: string
+  name: string
+  /** Credit data (present when picked from the customer picker; refreshed before payment). */
+  creditLimit?: number | null
+  outstandingBalance?: number
+}
+
 export interface CartState {
   lines: CartLine[]
-  customer: { id: string; name: string } | null
+  customer: CartCustomer | null
   orderDiscount: number
   notes: string
 }

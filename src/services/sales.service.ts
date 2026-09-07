@@ -9,7 +9,7 @@ import { computeLine, round2, sum } from "@/utils/money"
 import { hasPermission } from "@/lib/permissions"
 import { applyStockChange } from "./inventory.service"
 import { notificationService } from "./notification.service"
-import type { PaymentMethod } from "@/utils/validation"
+import type { SalePaymentMethod } from "@/utils/validation"
 
 export interface SaleItemInput {
   productId: string
@@ -19,7 +19,7 @@ export interface SaleItemInput {
 }
 export interface PaymentInput {
   amount: number
-  method: PaymentMethod
+  method: SalePaymentMethod
   reference?: string
 }
 export interface CreateSaleInput {
@@ -30,6 +30,41 @@ export interface CreateSaleInput {
   payments: PaymentInput[]
   notes?: string
   idempotencyKey: string
+  /** Actual time of sale for offline-synced tickets (validated to the last 7 days by the schema). */
+  soldAt?: Date
+}
+
+type Tx = Prisma.TransactionClient
+
+/**
+ * Applies `amount` of repayment to a customer's open CREDIT sale payments, oldest first.
+ * Marks payments PAID once fully settled and flips the sale's paymentStatus accordingly.
+ * Returns the amount actually allocated (≤ amount).
+ */
+export async function settleCustomerCredit(tx: Tx, businessId: string, customerId: string, amount: number, preferSaleId?: string): Promise<number> {
+  const open = await tx.payment.findMany({
+    where: { businessId, method: "CREDIT", status: "PENDING", sale: { customerId, status: { not: "CANCELLED" } } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, amount: true, settledAmount: true, saleId: true },
+  })
+  // A refund-to-credit cancels the debt of that particular sale first, then the oldest.
+  if (preferSaleId) open.sort((a, b) => Number(b.saleId === preferSaleId) - Number(a.saleId === preferSaleId))
+  let remaining = amount
+  const touchedSales = new Set<string>()
+  for (const p of open) {
+    if (remaining <= 0.009) break
+    const due = round2(p.amount - p.settledAmount)
+    const apply = Math.min(due, remaining)
+    const settled = round2(p.settledAmount + apply)
+    await tx.payment.update({ where: { id: p.id }, data: { settledAmount: settled, status: settled >= p.amount - 0.009 ? "PAID" : "PENDING" } })
+    remaining = round2(remaining - apply)
+    touchedSales.add(p.saleId)
+  }
+  for (const saleId of touchedSales) {
+    const stillOpen = await tx.payment.count({ where: { saleId, status: "PENDING" } })
+    await tx.sale.update({ where: { id: saleId }, data: { paymentStatus: stillOpen ? "PARTIALLY_PAID" : "PAID" } })
+  }
+  return round2(amount - remaining)
 }
 
 const saleInclude = {
@@ -107,12 +142,28 @@ export const salesService = {
 
     // Cash sales require an open register for this store
     const cashAmount = sum(input.payments.filter((p) => p.method === "CASH").map((p) => p.amount))
+    const creditAmount = sum(input.payments.filter((p) => p.method === "CREDIT").map((p) => p.amount))
     const register = await prisma.cashRegister.findFirst({ where: { businessId: ctx.businessId, storeId, status: "OPEN" } })
     if (cashAmount > 0 && !register) throw new AppError("REGISTER_CLOSED", "Open a cash register before accepting cash payments")
 
+    if (creditAmount > 0 && !input.customerId) throw validation("A customer is required for credit sales")
+    if (creditAmount > 0 && !hasPermission(ctx.role, "sale.credit")) throw forbidden("You are not allowed to sell on credit")
     if (input.customerId) {
       const c = await prisma.customer.findFirst({ where: { id: input.customerId, businessId: ctx.businessId, deletedAt: null } })
       if (!c) throw notFound("Customer")
+      if (creditAmount > 0) {
+        if (!c.isActive) throw invalidState("Customer account is inactive")
+        if (c.creditLimit == null) throw new AppError("CREDIT_NOT_ALLOWED", "This customer has no credit limit; set one on the customer profile first", { customerId: c.id })
+        const after = round2(c.outstandingBalance + creditAmount)
+        if (after > c.creditLimit + 0.009) {
+          throw new AppError("CREDIT_LIMIT_EXCEEDED", `Credit limit exceeded: balance ${c.outstandingBalance.toFixed(2)} + ${creditAmount.toFixed(2)} > limit ${c.creditLimit.toFixed(2)}`, {
+            outstandingBalance: c.outstandingBalance,
+            creditLimit: c.creditLimit,
+            requested: creditAmount,
+            available: round2(c.creditLimit - c.outstandingBalance),
+          })
+        }
+      }
     }
 
     const sale = await withUniqueRetry(() =>
@@ -128,8 +179,9 @@ export const salesService = {
             total,
             profit,
             status: "COMPLETED",
-            paymentStatus: "PAID",
+            paymentStatus: creditAmount > 0 ? (creditAmount >= total - 0.009 ? "PENDING" : "PARTIALLY_PAID") : "PAID",
             notes: input.notes,
+            createdAt: input.soldAt ?? undefined,
             businessId: ctx.businessId,
             storeId,
             customerId: input.customerId ?? null,
@@ -153,7 +205,8 @@ export const salesService = {
                 amount: p.amount,
                 method: p.method,
                 reference: p.reference,
-                status: "PAID",
+                status: p.method === "CREDIT" ? "PENDING" : "PAID",
+                createdAt: input.soldAt ?? undefined,
                 businessId: ctx.businessId,
                 storeId,
                 userId: ctx.userId,
@@ -182,12 +235,17 @@ export const salesService = {
         if (input.customerId) {
           await tx.customer.update({
             where: { id: input.customerId },
-            data: { totalSpending: { increment: total }, loyaltyPoints: { increment: Math.floor(total / 10) } },
+            data: { totalSpending: { increment: total }, loyaltyPoints: { increment: Math.floor(total / 10) }, outstandingBalance: creditAmount > 0 ? { increment: creditAmount } : undefined },
           })
+          if (creditAmount > 0) {
+            // Re-check the limit inside the transaction to prevent two concurrent credit sales overshooting it.
+            const fresh = await tx.customer.findUniqueOrThrow({ where: { id: input.customerId }, select: { outstandingBalance: true, creditLimit: true } })
+            if (fresh.creditLimit != null && fresh.outstandingBalance > fresh.creditLimit + 0.009) throw new AppError("CREDIT_LIMIT_EXCEEDED", "Credit limit exceeded", { outstandingBalance: fresh.outstandingBalance, creditLimit: fresh.creditLimit })
+          }
         }
 
         await writeAuditLog(
-          { businessId: ctx.businessId, userId: ctx.userId, action: "SALE_CREATED", entityType: "Sale", entityId: created.id, metadata: { saleNumber, total, items: computed.length }, ipAddress: ctx.ip },
+          { businessId: ctx.businessId, userId: ctx.userId, action: "SALE_CREATED", entityType: "Sale", entityId: created.id, metadata: { saleNumber, total, items: computed.length, credit: creditAmount || undefined, soldAt: input.soldAt?.toISOString() }, ipAddress: ctx.ip },
           tx
         )
         return tx.sale.findUniqueOrThrow({ where: { id: created.id }, include: saleInclude })
@@ -235,11 +293,12 @@ export const salesService = {
    * Full or partial refund. Creates a Refund, restocks items (unless damaged),
    * records negative register transaction for cash refunds, updates sale status.
    */
-  async refund(ctx: TenantContext, saleId: string, input: { items: { saleItemId: string; quantity: number }[]; reason: string; paymentMethod: PaymentMethod; restock: boolean }) {
-    const sale = await prisma.sale.findFirst({ where: { id: saleId, businessId: ctx.businessId, storeId: { in: ctx.storeIds } }, include: { items: true, refunds: true } })
+  async refund(ctx: TenantContext, saleId: string, input: { items: { saleItemId: string; quantity: number }[]; reason: string; paymentMethod: SalePaymentMethod; restock: boolean }) {
+    const sale = await prisma.sale.findFirst({ where: { id: saleId, businessId: ctx.businessId, storeId: { in: ctx.storeIds } }, include: { items: true, refunds: true, payments: true, customer: { select: { id: true, outstandingBalance: true } } } })
     if (!sale) throw notFound("Sale")
     if (sale.status === "CANCELLED") throw invalidState("Cannot refund a cancelled sale")
     if (sale.status === "REFUNDED") throw invalidState("Sale is already fully refunded")
+    if (input.paymentMethod === "CREDIT" && !sale.customer) throw validation("Refund to credit requires a customer on the sale")
 
     // Quantities already refunded per sale item
     const refunded = new Map<string, number>()
@@ -265,6 +324,11 @@ export const salesService = {
 
     const register = input.paymentMethod === "CASH" ? await prisma.cashRegister.findFirst({ where: { businessId: ctx.businessId, storeId: sale.storeId, status: "OPEN" } }) : null
     if (input.paymentMethod === "CASH" && !register) throw new AppError("REGISTER_CLOSED", "Open a cash register to issue cash refunds")
+    // A refund "to credit" can only cancel debt that actually exists on this sale.
+    const openCredit = round2(sum(sale.payments.filter((p) => p.method === "CREDIT").map((p) => p.amount - p.settledAmount)))
+    if (input.paymentMethod === "CREDIT" && refundAmount > openCredit + 0.009) {
+      throw new AppError("REFUND_EXCEEDS_CREDIT", `Only ${openCredit.toFixed(2)} of this sale is still owed on credit; refund the rest in cash or another method`, { openCredit, refundAmount })
+    }
 
     const fullyRefunded = sale.items.every((si) => {
       const already = refunded.get(si.id) ?? 0
@@ -302,7 +366,13 @@ export const salesService = {
             data: { type: "REFUND", amount: -refundAmount, reason: `Refund ${refundNumber}`, cashRegisterId: register.id, businessId: ctx.businessId, storeId: sale.storeId, userId: ctx.userId },
           })
         }
-        await tx.sale.update({ where: { id: sale.id }, data: { status: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED", paymentStatus: fullyRefunded ? "REFUNDED" : "PAID" } })
+        if (input.paymentMethod === "CREDIT" && sale.customerId) {
+          // Cancel the customer's debt instead of handing money back: settle this sale's credit lines first.
+          const settled = await settleCustomerCredit(tx, ctx.businessId, sale.customerId, refundAmount, sale.id)
+          await tx.customer.update({ where: { id: sale.customerId }, data: { outstandingBalance: { decrement: settled } } })
+        }
+        const stillOwed = await tx.payment.count({ where: { saleId: sale.id, status: "PENDING" } })
+        await tx.sale.update({ where: { id: sale.id }, data: { status: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED", paymentStatus: fullyRefunded ? "REFUNDED" : stillOwed ? sale.paymentStatus : "PAID" } })
         if (sale.customerId) {
           await tx.customer.update({ where: { id: sale.customerId }, data: { totalSpending: { decrement: refundAmount } } })
         }
@@ -327,6 +397,9 @@ export const salesService = {
       if (reg?.status !== "OPEN") throw invalidState("The register for this sale is closed; issue a refund instead")
     }
     const cash = sum(sale.payments.filter((p) => p.method === "CASH").map((p) => p.amount))
+    const creditLines = sale.payments.filter((p) => p.method === "CREDIT")
+    if (creditLines.some((p) => p.settledAmount > 0.009)) throw invalidState("Part of this credit sale has already been repaid; issue a refund instead")
+    const credit = sum(creditLines.map((p) => p.amount))
     await prisma.$transaction(async (tx) => {
       for (const it of sale.items) {
         await applyStockChange(tx, ctx, { productId: it.productId, delta: it.quantity, type: "RETURN", reason: `Cancelled ${sale.saleNumber}`, referenceId: sale.id, referenceType: "Sale" })
@@ -336,7 +409,7 @@ export const salesService = {
       }
       await tx.payment.updateMany({ where: { saleId: sale.id }, data: { status: "REFUNDED" } })
       await tx.sale.update({ where: { id: sale.id }, data: { status: "CANCELLED", paymentStatus: "REFUNDED", notes: [sale.notes, `Cancelled: ${reason}`].filter(Boolean).join("\n") } })
-      if (sale.customerId) await tx.customer.update({ where: { id: sale.customerId }, data: { totalSpending: { decrement: sale.total } } })
+      if (sale.customerId) await tx.customer.update({ where: { id: sale.customerId }, data: { totalSpending: { decrement: sale.total }, outstandingBalance: credit > 0 ? { decrement: credit } : undefined } })
       await writeAuditLog({ businessId: ctx.businessId, userId: ctx.userId, action: "SALE_CANCELLED", entityType: "Sale", entityId: sale.id, metadata: { reason, total: sale.total }, ipAddress: ctx.ip }, tx)
     })
     return this.getById(ctx, saleId)

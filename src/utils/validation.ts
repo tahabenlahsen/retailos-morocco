@@ -15,6 +15,8 @@ export const BUSINESS_TYPES = [
   "OTHER",
 ] as const
 export const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "CHECK", "OTHER"] as const
+/** Sale payments additionally allow CREDIT (sold on account to a known customer, repaid later). */
+export const SALE_PAYMENT_METHODS = [...PAYMENT_METHODS, "CREDIT"] as const
 export const PURCHASE_STATUSES = ["DRAFT", "ORDERED", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"] as const
 export const MOVEMENT_TYPES = ["SALE", "PURCHASE", "RETURN", "ADJUSTMENT", "TRANSFER", "DAMAGE", "LOSS"] as const
 export const REGISTER_TX_TYPES = ["WITHDRAWAL", "DEPOSIT"] as const
@@ -22,6 +24,7 @@ export const ROLE_NAMES = ["OWNER", "ADMIN", "MANAGER", "CASHIER", "INVENTORY_MA
 export const LOCALES = ["fr", "ar", "en"] as const
 
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]
+export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number]
 export type PurchaseStatus = (typeof PURCHASE_STATUSES)[number]
 export type MovementType = (typeof MOVEMENT_TYPES)[number]
 
@@ -284,28 +287,43 @@ export const saleItemInputSchema = z.object({
 
 export const paymentInputSchema = z.object({
   amount: positiveMoney,
-  method: z.enum(PAYMENT_METHODS),
+  method: z.enum(SALE_PAYMENT_METHODS),
   reference: z.string().trim().max(120).optional().or(z.literal("").transform(() => undefined)),
 })
 
-export const createSaleSchema = z.object({
-  storeId: uuid.optional(),
-  items: z.array(saleItemInputSchema).min(1).max(200),
-  customerId: uuid.optional().nullable(),
-  /** Order-level discount amount in currency. */
-  discountAmount: money.default(0),
-  payments: z.array(paymentInputSchema).min(1).max(10),
-  notes: z.string().trim().max(500).optional(),
-  /** Client-generated key to make sale creation idempotent (prevents duplicate transactions). */
-  idempotencyKey: z.string().trim().min(8).max(100),
-})
+export const createSaleSchema = z
+  .object({
+    storeId: uuid.optional(),
+    items: z.array(saleItemInputSchema).min(1).max(200),
+    customerId: uuid.optional().nullable(),
+    /** Order-level discount amount in currency. */
+    discountAmount: money.default(0),
+    payments: z.array(paymentInputSchema).min(1).max(10),
+    notes: z.string().trim().max(500).optional(),
+    /** Client-generated key to make sale creation idempotent (prevents duplicate transactions). */
+    idempotencyKey: z.string().trim().min(8).max(100),
+    /** When the sale actually happened (offline POS sync). Must be in the past 7 days; defaults to now. */
+    soldAt: z.coerce.date().optional(),
+  })
+  .refine((s) => !s.payments.some((p) => p.method === "CREDIT") || Boolean(s.customerId), { message: "A customer is required for credit sales", path: ["customerId"] })
+  .refine((s) => s.payments.filter((p) => p.method === "CREDIT").length <= 1, { message: "Only one credit line per sale", path: ["payments"] })
+  .refine((s) => !s.soldAt || (s.soldAt.getTime() <= Date.now() + 5 * 60_000 && s.soldAt.getTime() >= Date.now() - 7 * 86_400_000), { message: "soldAt must be within the last 7 days", path: ["soldAt"] })
 
 export const refundSchema = z.object({
   items: z.array(z.object({ saleItemId: uuid, quantity: z.number().int().positive() })).min(1),
   reason: z.string().trim().min(2).max(300),
-  paymentMethod: z.enum(PAYMENT_METHODS).default("CASH"),
+  /** CREDIT = reduce the customer's outstanding balance instead of returning money. */
+  paymentMethod: z.enum(SALE_PAYMENT_METHODS).default("CASH"),
   /** If true, items are restocked. False for damaged goods. */
   restock: z.boolean().default(true),
+})
+
+export const customerPaymentSchema = z.object({
+  amount: positiveMoney,
+  method: z.enum(PAYMENT_METHODS),
+  reference: z.string().trim().max(120).optional().or(z.literal("").transform(() => undefined)),
+  notes: z.string().trim().max(300).optional().or(z.literal("").transform(() => undefined)),
+  storeId: uuid.optional(),
 })
 
 export const heldCartSchema = z.object({
@@ -411,14 +429,10 @@ export const createCustomerSchema = z.object({
   email: email.optional().or(z.literal("").transform(() => undefined)),
   address: optionalTrimmed,
   notes: z.string().trim().max(1000).optional(),
+  /** Max outstanding balance allowed on credit sales. null/undefined = credit not allowed. */
+  creditLimit: money.max(10_000_000).nullable().optional(),
 })
 export const updateCustomerSchema = createCustomerSchema.partial().extend({ isActive: z.boolean().optional() })
-
-export const customerPaymentSchema = z.object({
-  amount: positiveMoney,
-  method: z.enum(PAYMENT_METHODS),
-  notes: z.string().trim().max(300).optional(),
-})
 
 // ============================================================
 // EXPENSES

@@ -43,6 +43,7 @@ export type AuditAction =
   | "CUSTOMER_CREATED"
   | "CUSTOMER_UPDATED"
   | "CUSTOMER_DELETED"
+  | "CUSTOMER_PAYMENT"
 
 export interface AuditEntry {
   businessId: string

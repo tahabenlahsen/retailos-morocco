@@ -12,8 +12,12 @@ export function useApiError() {
     (err: unknown): string => {
       if (err instanceof ApiError) {
         // Business-rule errors carry a precise server message worth surfacing.
-        if (["INSUFFICIENT_STOCK", "PAYMENT_MISMATCH", "INVALID_STATE", "CONFLICT", "REGISTER_CLOSED", "REGISTER_ALREADY_OPEN", "FORBIDDEN"].includes(err.code)) {
+        if (["INSUFFICIENT_STOCK", "PAYMENT_MISMATCH", "INVALID_STATE", "CONFLICT", "REGISTER_CLOSED", "REGISTER_ALREADY_OPEN", "FORBIDDEN", "REFUND_EXCEEDS_CREDIT", "NO_OUTSTANDING_BALANCE"].includes(err.code)) {
           return err.message || t(`errors.${err.code}`)
+        }
+        if (err.code === "CREDIT_LIMIT_EXCEEDED") {
+          const d = err.details as { available?: number; creditLimit?: number } | undefined
+          return d?.available != null ? `${t("errors.CREDIT_LIMIT_EXCEEDED")} — ${t("customers.creditAvailable")}: ${d.available.toFixed(2)} MAD` : t("errors.CREDIT_LIMIT_EXCEEDED")
         }
         if (err.code === "VALIDATION_ERROR" && Array.isArray(err.details) && err.details.length) {
           const d = err.details as { path: string; message: string }[]

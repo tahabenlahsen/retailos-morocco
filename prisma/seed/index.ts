@@ -31,7 +31,7 @@ async function reset() {
   for (const t of tables) await prisma.$executeRawUnsafe(`DELETE FROM "${t}"`)
 }
 
-async function seedBusiness(opts: { name: string; type: string; city: string; ownerEmail: string; stores: string[]; extraUsers?: { email: string; role: string; first: string; last: string; storeIdx: number[] }[]; products: { name: string; sku: string; barcode: string; cat: string; brand?: string; buy: number; sell: number; stock: number; min: number; unit?: string }[]; customers: { name: string; phone: string }[]; suppliers: string[]; salesDays: number }) {
+async function seedBusiness(opts: { name: string; type: string; city: string; ownerEmail: string; stores: string[]; extraUsers?: { email: string; role: string; first: string; last: string; storeIdx: number[] }[]; products: { name: string; sku: string; barcode: string; cat: string; brand?: string; buy: number; sell: number; stock: number; min: number; unit?: string }[]; customers: { name: string; phone: string; creditLimit?: number }[]; suppliers: string[]; salesDays: number }) {
   const roles = new Map((await prisma.role.findMany()).map((r) => [r.name, r.id]))
   const hash = await bcrypt.hash(PASSWORD, 10)
   const business = await prisma.business.create({ data: { name: opts.name, type: opts.type, ownerName: "Demo Owner", phone: "+212600000000", email: opts.ownerEmail, city: opts.city, address: "12 Rue de la Liberté", status: "ACTIVE", subscriptionPlan: "PROFESSIONAL", onboarded: true } })
@@ -59,7 +59,7 @@ async function seedBusiness(opts: { name: string; type: string; city: string; ow
   const expCats = new Map<string, string>()
   for (const [code, name] of EXPENSE_CATS) expCats.set(code, (await prisma.expenseCategory.create({ data: { name, code, businessId: business.id } })).id)
   const customers: { id: string }[] = []
-  for (const c of opts.customers) customers.push(await prisma.customer.create({ data: { name: c.name, phone: c.phone, businessId: business.id } }))
+  for (const c of opts.customers) customers.push(await prisma.customer.create({ data: { name: c.name, phone: c.phone, creditLimit: c.creditLimit ?? null, businessId: business.id } }))
 
   // Products in store 1 (and a subset in store 2) with initial stock movements
   const store1Products: { id: string; sellingPrice: number; purchasePrice: number; stockQuantity: number }[] = []
@@ -121,6 +121,29 @@ async function seedBusiness(opts: { name: string; type: string; city: string; ow
       await prisma.cashRegister.update({ where: { id: reg.id }, data: { closedAt: daysAgo(d, 22), closedBy: cashier.id, expectedBalance: expected, actualBalance: r2(expected + diff), closingBalance: r2(expected + diff), difference: diff, differenceReason: diff ? "Erreur de rendu monnaie" : null } })
     }
   })
+  // One credit ("carnet") sale yesterday for the first customer who has a credit limit
+  const creditCustomerIdx = opts.customers.findIndex((c) => c.creditLimit)
+  const creditProduct = store1Products.find((p) => p.stockQuantity >= 2)
+  if (creditCustomerIdx >= 0 && creditProduct) {
+    const createdAt = daysAgo(1, 18)
+    const total = r2(2 * creditProduct.sellingPrice)
+    const subtotal = r2(total / 1.2)
+    saleSeq++
+    const dp = `${createdAt.getFullYear()}${String(createdAt.getMonth() + 1).padStart(2, "0")}${String(createdAt.getDate()).padStart(2, "0")}`
+    const sale = await prisma.sale.create({
+      data: {
+        saleNumber: `S-${dp}-0099`, idempotencyKey: `seed-${business.id}-${saleSeq}`, subtotal, taxAmount: r2(total - subtotal), total, profit: r2(subtotal - 2 * creditProduct.purchasePrice), status: "COMPLETED", paymentStatus: "PENDING", createdAt, updatedAt: createdAt,
+        businessId: business.id, storeId: stores[0].id, customerId: customers[creditCustomerIdx].id, userId: cashier.id,
+        items: { create: [{ productId: creditProduct.id, quantity: 2, unitPrice: creditProduct.sellingPrice, taxRate: 0.2, discount: 0, subtotal, taxAmount: r2(total - subtotal), total, profit: r2(subtotal - 2 * creditProduct.purchasePrice) }] },
+        payments: { create: [{ amount: total, method: "CREDIT", status: "PENDING", businessId: business.id, storeId: stores[0].id, userId: cashier.id, createdAt }] },
+      },
+    })
+    const prev = creditProduct.stockQuantity
+    creditProduct.stockQuantity = prev - 2
+    await prisma.inventoryMovement.create({ data: { productId: creditProduct.id, quantity: -2, previousQuantity: prev, newQuantity: creditProduct.stockQuantity, type: "SALE", reason: `Sale ${sale.saleNumber}`, referenceId: sale.id, referenceType: "Sale", businessId: business.id, storeId: stores[0].id, userId: cashier.id, createdAt } })
+    await prisma.customer.update({ where: { id: customers[creditCustomerIdx].id }, data: { outstandingBalance: total, totalSpending: { increment: total } } })
+  }
+
   // Persist final stock quantities
   for (const p of store1Products) await prisma.product.update({ where: { id: p.id }, data: { stockQuantity: p.stockQuantity } })
 
@@ -159,7 +182,7 @@ async function main() {
       { email: "manager@demo.ma", role: "MANAGER", first: "Salma", last: "Bennani", storeIdx: [0, 1] },
     ],
     suppliers: ["Coca-Cola Maroc", "Centrale Danone", "Bimo", "Lesieur Cristal"],
-    customers: [{ name: "Ahmed Benali", phone: "+212661000001" }, { name: "Fatima Zahra", phone: "+212661000002" }, { name: "Karim El Idrissi", phone: "+212661000003" }, { name: "Nadia Tazi", phone: "+212661000004" }],
+    customers: [{ name: "Ahmed Benali", phone: "+212661000001", creditLimit: 500 }, { name: "Fatima Zahra", phone: "+212661000002", creditLimit: 300 }, { name: "Karim El Idrissi", phone: "+212661000003" }, { name: "Nadia Tazi", phone: "+212661000004" }],
     products: [
       { name: "Coca-Cola 33cl", sku: "CC-33", barcode: "5449000000996", cat: "Boissons", brand: "Coca-Cola", buy: 4, sell: 6, stock: 120, min: 30 },
       { name: "Sidi Ali 1.5L", sku: "SA-150", barcode: "6111035000015", cat: "Boissons", brand: "Sidi Ali", buy: 4.5, sell: 6.5, stock: 90, min: 24 },

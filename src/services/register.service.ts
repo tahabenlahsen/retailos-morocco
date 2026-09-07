@@ -37,9 +37,10 @@ export const registerService = {
     const refunds = by("REFUND") // stored negative
     const deposits = by("DEPOSIT")
     const withdrawals = by("WITHDRAWAL") // stored negative
-    const expected = round2(reg.openingBalance + sales + refunds + deposits + withdrawals)
+    const customerPayments = by("CUSTOMER_PAYMENT") // cash repayments of credit balances
+    const expected = round2(reg.openingBalance + sales + refunds + deposits + withdrawals + customerPayments)
     const saleCount = await prisma.sale.count({ where: { cashRegisterId: registerId, status: { not: "CANCELLED" } } })
-    return { summary: { openingBalance: reg.openingBalance, cashSales: sales, cashRefunds: refunds, deposits, withdrawals, expected, saleCount } }
+    return { summary: { openingBalance: reg.openingBalance, cashSales: sales, cashRefunds: refunds, deposits, withdrawals, customerPayments, expected, saleCount } }
   },
 
   async addTransaction(ctx: TenantContext, registerId: string, input: { type: "WITHDRAWAL" | "DEPOSIT"; amount: number; reason: string }) {

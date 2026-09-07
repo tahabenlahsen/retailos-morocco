@@ -23,7 +23,7 @@ import { useMe } from "@/hooks/use-me"
 import { useLocale } from "@/components/providers/locale-provider"
 import { useApiError } from "@/hooks/use-api-error"
 import { api } from "@/lib/api-client"
-import { PAYMENT_METHODS, type PaymentMethod } from "@/utils/validation"
+import { PAYMENT_METHODS, SALE_PAYMENT_METHODS, type SalePaymentMethod } from "@/utils/validation"
 import { round2 } from "@/utils/money"
 
 type Sale = Omit<ReceiptSale, "refunds"> & { refunds: { id: string; refundNumber: string; amount: number; reason: string | null; items: string; createdAt: string; paymentMethod: string }[]; profit: number | null; notes: string | null }
@@ -39,11 +39,14 @@ export default function SaleDetailPage() {
   const [cancelOpen, setCancelOpen] = useState(false)
   const [qty, setQty] = useState<Record<string, number>>({})
   const [reason, setReason] = useState("")
-  const [method, setMethod] = useState<PaymentMethod>("CASH")
+  const [method, setMethod] = useState<SalePaymentMethod>("CASH")
   const [restock, setRestock] = useState(true)
 
   const q = useQuery({ queryKey: ["sale", id], queryFn: () => api.get<Sale>(`/api/sales/${id}`) })
   const sale = q.data
+  // Credit still owed on this sale: refunds may cancel that debt instead of returning cash.
+  const openCredit = round2((sale?.payments ?? []).filter((p) => p.method === "CREDIT").reduce((a, p) => a + (p.amount - (p.settledAmount ?? 0)), 0))
+  const refundMethods: readonly SalePaymentMethod[] = openCredit > 0 ? SALE_PAYMENT_METHODS : PAYMENT_METHODS
 
   // Remaining refundable quantity per line
   const refunded = new Map<string, number>()
@@ -98,7 +101,10 @@ export default function SaleDetailPage() {
               </CardContent>
             </Card>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Card><CardHeader><CardTitle>{t("sales.payment")}</CardTitle></CardHeader><CardContent className="space-y-1 text-sm">{sale.payments.map((p, i) => <div key={i} className="flex justify-between"><span>{t(`pos.methods.${p.method}`)}{p.reference ? <span className="text-muted-foreground text-xs"> · {p.reference}</span> : null}</span><Money value={p.amount} /></div>)}</CardContent></Card>
+              <Card><CardHeader><CardTitle className="flex items-center gap-2">{t("sales.payment")}{sale.paymentStatus && sale.paymentStatus !== "PAID" ? <Badge variant={sale.paymentStatus === "REFUNDED" ? "muted" : "warning"}>{t(`sales.paymentStatus.${sale.paymentStatus}`)}</Badge> : null}</CardTitle></CardHeader><CardContent className="space-y-1 text-sm">
+                {sale.payments.map((p, i) => <div key={i} className="flex justify-between"><span>{t(`pos.methods.${p.method}`)}{p.reference ? <span className="text-muted-foreground text-xs"> · {p.reference}</span> : null}{p.method === "CREDIT" && (p.settledAmount ?? 0) > 0 ? <span className="text-muted-foreground text-xs"> · {t("customers.settled")} <Money value={p.settledAmount ?? 0} /></span> : null}</span><Money value={p.amount} /></div>)}
+                {openCredit > 0 ? <div className="flex justify-between border-t pt-1 font-medium text-amber-700 dark:text-amber-300"><span>{t("pos.creditDue")}</span><Money value={openCredit} /></div> : null}
+              </CardContent></Card>
               <Card><CardHeader><CardTitle>{t("sales.refunds")}</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">{sale.refunds.length ? sale.refunds.map((r) => <div key={r.id} className="flex justify-between gap-2"><div><p className="font-mono">{r.refundNumber}</p><p className="text-xs text-muted-foreground">{formatDateTime(r.createdAt)} · {t(`pos.methods.${r.paymentMethod}`)}{r.reason ? ` · ${r.reason}` : ""}</p></div><Money value={-r.amount} className="text-destructive font-medium" /></div>) : <p className="text-muted-foreground">—</p>}</CardContent></Card>
             </div>
             {sale.notes ? <Card><CardContent className="p-4 text-sm whitespace-pre-wrap">{sale.notes}</CardContent></Card> : null}
@@ -121,7 +127,7 @@ export default function SaleDetailPage() {
                 ) })}
               </div>
               <div className="flex justify-between text-sm font-semibold"><span>{t("sales.refundAmount")}</span><Money value={refundTotal} /></div>
-              <FormField label={t("sales.refundMethod")}>{(id) => <Select value={method} onValueChange={(v) => setMethod(v as PaymentMethod)}><SelectTrigger id={id}><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_METHODS.map((m) => <SelectItem key={m} value={m}>{t(`pos.methods.${m}`)}</SelectItem>)}</SelectContent></Select>}</FormField>
+              <FormField label={t("sales.refundMethod")} hint={openCredit > 0 ? t("sales.refundCreditHint", { amount: openCredit.toFixed(2) }) : undefined}>{(id) => <Select value={method} onValueChange={(v) => setMethod(v as SalePaymentMethod)}><SelectTrigger id={id}><SelectValue /></SelectTrigger><SelectContent>{refundMethods.map((m) => <SelectItem key={m} value={m}>{t(`pos.methods.${m}`)}</SelectItem>)}</SelectContent></Select>}</FormField>
               <label className="flex items-center gap-2 text-sm"><Checkbox checked={restock} onCheckedChange={(v) => setRestock(!!v)} />{t("sales.restock")}</label>
               <FormField label={t("common.reason")} required>{(id) => <Textarea id={id} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />}</FormField>
             </div>

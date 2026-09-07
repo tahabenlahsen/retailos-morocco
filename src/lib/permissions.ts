@@ -43,6 +43,7 @@ export const PERMISSIONS = [
   // Sales / POS
   "sale.view",
   "sale.create",
+  "sale.credit", // complete a sale with a CREDIT (on-account) payment
   "sale.refund",
   "sale.cancel",
   "register.open",
@@ -60,6 +61,8 @@ export const PERMISSIONS = [
   // Customers
   "customer.view",
   "customer.manage",
+  "customer.creditLimit", // set / change a customer's credit limit
+  "customer.payment", // record a repayment of an outstanding balance
   // Expenses
   "expense.view",
   "expense.create",
@@ -94,6 +97,7 @@ const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     "inventory.transfer",
     "sale.view",
     "sale.create",
+    "sale.credit",
     "sale.refund",
     "sale.cancel",
     "register.open",
@@ -108,6 +112,8 @@ const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     "supplier.manage",
     "customer.view",
     "customer.manage",
+    "customer.creditLimit",
+    "customer.payment",
     "expense.view",
     "expense.create",
     "analytics.view",
@@ -120,11 +126,13 @@ const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     "product.view",
     "sale.view",
     "sale.create",
+    "sale.credit",
     "register.open",
     "register.close",
     "register.transaction",
     "customer.view",
     "customer.manage",
+    "customer.payment",
     "notification.view",
   ],
   INVENTORY_MANAGER: [

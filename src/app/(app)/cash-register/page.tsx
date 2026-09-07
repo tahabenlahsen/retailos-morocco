@@ -25,7 +25,7 @@ import { api, type Paginated } from "@/lib/api-client"
 import { round2 } from "@/utils/money"
 
 interface Tx { id: string; type: string; amount: number; reason: string | null; createdAt: string }
-interface Summary { openingBalance: number; cashSales: number; cashRefunds: number; deposits: number; withdrawals: number; expected: number; saleCount: number }
+interface Summary { openingBalance: number; cashSales: number; cashRefunds: number; deposits: number; withdrawals: number; customerPayments: number; expected: number; saleCount: number }
 interface Register { id: string; name: string; openingBalance: number; status: string; openedAt: string; closedAt: string | null; openedBy: string; expectedBalance: number | null; actualBalance: number | null; difference: number | null; differenceReason: string | null; transactions: Tx[]; summary: Summary }
 interface HistoryRow { id: string; name: string; status: string; openedAt: string; closedAt: string | null; openingBalance: number; expectedBalance: number | null; actualBalance: number | null; difference: number | null; differenceReason: string | null; openedByName: string | null; closedByName: string | null; store: { name: string } }
 
@@ -83,7 +83,7 @@ export default function CashRegisterPage() {
               <Card className="lg:col-span-1">
                 <CardHeader><CardTitle className="flex items-center justify-between">{r.name}<Badge variant="success">{t("register.status.OPEN")}</Badge></CardTitle><CardDescription>{t("register.openedAt")} {formatDateTime(r.openedAt)}</CardDescription></CardHeader>
                 <CardContent className="space-y-2 text-sm">
-                  {([["openingBalance", r.summary.openingBalance], ["cashSales", r.summary.cashSales], ["cashRefunds", r.summary.cashRefunds], ["deposits", r.summary.deposits], ["withdrawals", r.summary.withdrawals]] as const).map(([k, v]) => (
+                  {([["openingBalance", r.summary.openingBalance], ["cashSales", r.summary.cashSales], ["cashRefunds", r.summary.cashRefunds], ["customerPayments", r.summary.customerPayments ?? 0], ["deposits", r.summary.deposits], ["withdrawals", r.summary.withdrawals]] as const).map(([k, v]) => (
                     <div key={k} className="flex justify-between"><span className="text-muted-foreground">{t(`register.${k}`)}</span><Money value={v} signed={k !== "openingBalance"} /></div>
                   ))}
                   <div className="flex justify-between border-t pt-2 font-semibold text-base"><span>{t("register.expected")}</span><Money value={r.summary.expected} /></div>

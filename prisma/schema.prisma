@@ -24,7 +24,8 @@ datasource db {
 // MovementType: SALE, PURCHASE, RETURN, ADJUSTMENT, TRANSFER, DAMAGE, LOSS
 // SaleStatus: DRAFT, COMPLETED, CANCELLED, REFUNDED
 // PaymentStatus: PENDING, PARTIALLY_PAID, PAID, REFUNDED
-// PaymentMethod: CASH, CARD, BANK_TRANSFER, CHECK, OTHER
+// PaymentMethod: CASH, CARD, BANK_TRANSFER, CHECK, OTHER (+ CREDIT for sales paid on account)
+// CashRegisterTransaction.type: SALE, REFUND, DEPOSIT, WITHDRAWAL, ADJUSTMENT, CUSTOMER_PAYMENT
 // RefundStatus: PENDING, APPROVED, REJECTED, COMPLETED
 // RegisterStatus: OPEN, CLOSED
 // TransactionType: SALE, REFUND, WITHDRAWAL, DEPOSIT, ADJUSTMENT
@@ -136,6 +137,7 @@ model Business {
   cashRegisters            CashRegister[]
   cashRegisterTransactions CashRegisterTransaction[]
   purchaseOrders           PurchaseOrder[]
+  customerPayments         CustomerPayment[]
 
   @@index([status])
   @@index([subscriptionPlan])
@@ -170,6 +172,7 @@ model Store {
   payments                 Payment[]
   refunds                  Refund[]
   cashRegisterTransactions CashRegisterTransaction[]
+  customerPayments         CustomerPayment[]
 
   @@index([businessId])
   @@index([isActive])
@@ -398,13 +401,14 @@ model SaleItem {
 }
 
 model Payment {
-  id        String   @id @default(uuid())
-  amount    Float
-  method    String
-  reference String? // Transaction reference, card number, etc.
-  status    String   @default("PAID")
-  notes     String?
-  createdAt DateTime @default(now())
+  id            String   @id @default(uuid())
+  amount        Float
+  method        String
+  reference     String? // Transaction reference, card number, etc.
+  status        String   @default("PAID")
+  settledAmount Float    @default(0) // For CREDIT payments: portion since repaid by the customer
+  notes         String?
+  createdAt     DateTime @default(now())
 
   // Relations
   saleId     String
@@ -603,7 +607,8 @@ model Customer {
   address            String?
   loyaltyPoints      Int       @default(0)
   totalSpending      Float     @default(0)
-  outstandingBalance Float     @default(0)
+  outstandingBalance Float     @default(0) // Amount owed on credit ("crédit") sales
+  creditLimit        Float? // null = credit sales not allowed for this customer
   notes              String?
   isActive           Boolean   @default(true)
   createdAt          DateTime  @default(now())
@@ -612,13 +617,39 @@ model Customer {
 
   // Relations
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+  business   Business          @relation(fields: [businessId], references: [id])
   sales      Sale[]
+  payments   CustomerPayment[]
 
   @@index([businessId])
   @@index([phone])
   @@index([isActive])
   @@map("customers")
+}
+
+/// Repayment of an outstanding credit balance (settles CREDIT sale payments FIFO).
+model CustomerPayment {
+  id        String   @id @default(uuid())
+  amount    Float
+  method    String
+  reference String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  // Relations
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id])
+  userId     String
+
+  @@index([customerId])
+  @@index([businessId])
+  @@index([storeId])
+  @@index([createdAt])
+  @@map("customer_payments")
 }
 
 model Expense {
