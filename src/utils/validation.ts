@@ -302,6 +302,8 @@ export const createSaleSchema = z
     notes: z.string().trim().max(500).optional(),
     /** Client-generated key to make sale creation idempotent (prevents duplicate transactions). */
     idempotencyKey: z.string().trim().min(8).max(100),
+    offlineOwner: z.object({ businessId: uuid, userId: uuid }).optional(),
+    registerId: uuid.optional(),
     /** When the sale actually happened (offline POS sync). Must be in the past 7 days; defaults to now. */
     soldAt: z.coerce.date().optional(),
   })

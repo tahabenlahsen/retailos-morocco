@@ -30,6 +30,8 @@ export interface CreateSaleInput {
   payments: PaymentInput[]
   notes?: string
   idempotencyKey: string
+  offlineOwner?: { businessId: string; userId: string }
+  registerId?: string
   /** Actual time of sale for offline-synced tickets (validated to the last 7 days by the schema). */
   soldAt?: Date
 }
@@ -84,12 +86,15 @@ export const salesService = {
    * Any failure rolls the whole thing back.
    */
   async create(ctx: TenantContext, input: CreateSaleInput) {
+    if (input.offlineOwner && (input.offlineOwner.businessId !== ctx.businessId || input.offlineOwner.userId !== ctx.userId)) {
+      throw new AppError("UNAUTHORIZED", "This sale belongs to another session")
+    }
     const storeId = resolveStoreId(ctx, input.storeId)
 
     // Idempotency: return the existing sale for a repeated key.
     const existing = await prisma.sale.findUnique({ where: { idempotencyKey: input.idempotencyKey }, include: saleInclude })
     if (existing) {
-      if (existing.businessId !== ctx.businessId) throw forbidden()
+      if (existing.businessId !== ctx.businessId || existing.storeId !== storeId || !ctx.storeIds.includes(existing.storeId) || existing.userId !== ctx.userId) throw forbidden()
       return { sale: existing, duplicate: true }
     }
 
@@ -143,7 +148,8 @@ export const salesService = {
     // Cash sales require an open register for this store
     const cashAmount = sum(input.payments.filter((p) => p.method === "CASH").map((p) => p.amount))
     const creditAmount = sum(input.payments.filter((p) => p.method === "CREDIT").map((p) => p.amount))
-    const register = await prisma.cashRegister.findFirst({ where: { businessId: ctx.businessId, storeId, status: "OPEN" } })
+    if (input.soldAt && cashAmount > 0 && !input.registerId) throw invalidState("Offline cash sales must identify their original register")
+    const register = await prisma.cashRegister.findFirst({ where: { id: input.registerId, businessId: ctx.businessId, storeId, status: "OPEN" } })
     if (cashAmount > 0 && !register) throw new AppError("REGISTER_CLOSED", "Open a cash register before accepting cash payments")
 
     if (creditAmount > 0 && !input.customerId) throw validation("A customer is required for credit sales")
@@ -166,8 +172,19 @@ export const salesService = {
       }
     }
 
+    let duplicate = false
     const sale = await withUniqueRetry(() =>
       prisma.$transaction(async (tx) => {
+        const repeated = await tx.sale.findUnique({ where: { idempotencyKey: input.idempotencyKey }, include: saleInclude })
+        if (repeated) {
+          if (repeated.businessId !== ctx.businessId || repeated.storeId !== storeId || repeated.userId !== ctx.userId) throw forbidden()
+          duplicate = true
+          return repeated
+        }
+        if (cashAmount > 0 && register) {
+          const open = await tx.cashRegister.updateMany({ where: { id: register.id, businessId: ctx.businessId, storeId, status: "OPEN" }, data: { status: "OPEN" } })
+          if (open.count !== 1) throw new AppError("REGISTER_CLOSED", "The original register is closed; reconcile this sale before retrying")
+        }
         const saleNumber = await nextSaleNumber(tx, ctx.businessId)
         const created = await tx.sale.create({
           data: {
@@ -228,7 +245,7 @@ export const salesService = {
 
         if (register && cashAmount > 0) {
           await tx.cashRegisterTransaction.create({
-            data: { type: "SALE", amount: cashAmount, reason: `Sale ${saleNumber}`, cashRegisterId: register.id, businessId: ctx.businessId, storeId, userId: ctx.userId },
+            data: { type: "SALE", amount: cashAmount, reason: `Sale ${saleNumber}`, cashRegisterId: register.id, businessId: ctx.businessId, storeId, userId: ctx.userId, createdAt: input.soldAt },
           })
         }
 
@@ -254,7 +271,7 @@ export const salesService = {
 
     // Post-commit side effects (non-critical)
     void Promise.all(computed.map((c) => notificationService.checkStockLevel(ctx.businessId, c.product.id))).catch(() => {})
-    return { sale, duplicate: false }
+    return { sale, duplicate }
   },
 
   async getById(ctx: TenantContext, id: string) {

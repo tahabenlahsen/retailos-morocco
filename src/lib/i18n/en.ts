@@ -91,6 +91,14 @@ const en = {
   },
   errors: { VALIDATION_ERROR: "Invalid data", UNAUTHORIZED: "Session expired, please sign in again", FORBIDDEN: "Action not allowed", NOT_FOUND: "Item not found", CONFLICT: "Conflicts with existing data", INSUFFICIENT_STOCK: "Insufficient stock", REGISTER_CLOSED: "The register is closed", REGISTER_ALREADY_OPEN: "A register is already open", PAYMENT_MISMATCH: "Payments do not match the total", CREDIT_NOT_ALLOWED: "This customer has no credit limit. Set one on their profile first.", CREDIT_LIMIT_EXCEEDED: "Credit limit exceeded", REFUND_EXCEEDS_CREDIT: "Amount exceeds the credit still owed on this sale", NO_OUTSTANDING_BALANCE: "This customer has no outstanding balance", INVALID_STATE: "Operation not possible in the current state", RATE_LIMITED: "Too many requests, please wait", INTERNAL_ERROR: "Server error, please try again", NETWORK: "Cannot connect. Check your network." },
   pwa: { install: "Install app", offline: "You are offline. Some features are unavailable." },
+  offline: {
+    title: "Offline sales", description: "Sales taken without a connection are stored on this device and sent to the server automatically when the network returns. A sale the server rejects stays here until the cause is fixed.",
+    offline: "Offline", online: "Connected", queued: "{{count}} pending", empty: "No pending sales", status: { pending: "Pending", failed: "Rejected" },
+    retry: "Retry", discard: "Delete", discardTitle: "Delete this offline sale?", discardText: "Sale {{ref}} will be permanently removed from this device and never sent to the server. Stock will not be deducted.",
+    syncNow: "Sync now", syncedCount: "{{count}} sale(s) synced", failedCount: "{{count}} sale(s) rejected by the server",
+    saleQueued: "Offline: sale {{ref}} saved on this device, it will sync when the network is back", provisionalReceipt: "PROVISIONAL RECEIPT — OFFLINE",
+    fixThenRetry: "fix the cause, then retry", creditNotOffline: "Credit sales need a connection (limit check).", servedFromCache: "Showing data from the local cache", pendingBanner: "{{count}} offline sale(s) waiting to sync",
+  },
 } satisfies Translation
 
 export default en

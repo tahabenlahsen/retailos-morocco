@@ -52,6 +52,27 @@ describe("sales: atomic creation", () => {
     expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).stockQuantity).toBe(9)
   })
 
+  it("returns the same sale for simultaneous retries of one checkout", async () => {
+    const p = await createProduct(b, { sellingPrice: 5, stockQuantity: 10 })
+    const input = { items: [{ productId: p.id, quantity: 1, discount: 0 }], discountAmount: 0, payments: [{ method: "CASH" as const, amount: 5 }], idempotencyKey: key() }
+    const results = await Promise.all([salesService.create(b.ctx(), input), salesService.create(b.ctx(), input)])
+    expect(results[0].sale.id).toBe(results[1].sale.id)
+    expect(results.filter((result) => result.duplicate)).toHaveLength(1)
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).stockQuantity).toBe(9)
+  })
+
+  it("binds offline replay and idempotent responses to their original user and store", async () => {
+    const p = await createProduct(b, { sellingPrice: 5, stockQuantity: 10 })
+    const input = { storeId: b.storeId, offlineOwner: { businessId: b.businessId, userId: b.ownerId }, items: [{ productId: p.id, quantity: 1, discount: 0 }], discountAmount: 0, payments: [{ method: "CARD" as const, amount: 5 }], idempotencyKey: key() }
+    await expect(salesService.create(b.ctx("CASHIER", b.cashierId), input)).rejects.toMatchObject({ code: "UNAUTHORIZED" })
+    expect(await prisma.sale.count({ where: { idempotencyKey: input.idempotencyKey } })).toBe(0)
+    const result = await salesService.create(b.ctx(), input)
+    await expect(salesService.create(b.ctx("CASHIER", b.cashierId), { ...input, offlineOwner: undefined })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    await expect(salesService.create(b.ctx(), { ...input, storeId: b.store2Id })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect((await salesService.create(b.ctx(), input)).sale.id).toBe(result.sale.id)
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).stockQuantity).toBe(9)
+  })
+
   it("rolls back everything when stock is insufficient (second line fails)", async () => {
     const ok = await createProduct(b, { sellingPrice: 10, stockQuantity: 10 })
     const scarce = await createProduct(b, { sellingPrice: 10, stockQuantity: 1 })
@@ -75,6 +96,24 @@ describe("sales: atomic creation", () => {
     // card works without register
     const { sale } = await salesService.create(b.ctx(), { storeId: b.store2Id, items: [{ productId: p.id, quantity: 1, discount: 0 }], discountAmount: 0, payments: [{ method: "CARD", amount: 10 }], idempotencyKey: key() })
     expect(sale.cashRegisterId).toBeNull()
+  })
+
+  it("keeps offline cash sales on their original register and preserves the transaction time", async () => {
+    const offline = await createBusiness("Offline register")
+    const reg = await openRegister(offline, 0)
+    const p = await createProduct(offline, { sellingPrice: 10 })
+    const soldAt = new Date(Date.now() - 60_000)
+    const input = { storeId: offline.storeId, registerId: reg.id, soldAt, items: [{ productId: p.id, quantity: 1, discount: 0 }], discountAmount: 0, payments: [{ method: "CASH" as const, amount: 10 }], idempotencyKey: key() }
+    const { sale } = await salesService.create(offline.ctx(), input)
+    expect(sale.cashRegisterId).toBe(reg.id)
+    expect(sale.createdAt).toEqual(soldAt)
+    const transaction = await prisma.cashRegisterTransaction.findFirstOrThrow({ where: { cashRegisterId: reg.id, type: "SALE" } })
+    expect(transaction.createdAt).toEqual(soldAt)
+    await registerService.close(offline.ctx(), reg.id, { actualBalance: 10 })
+    const next = await openRegister(offline, 0)
+    await expect(salesService.create(offline.ctx(), { ...input, idempotencyKey: key() })).rejects.toMatchObject({ code: "REGISTER_CLOSED" })
+    expect(await prisma.cashRegisterTransaction.count({ where: { cashRegisterId: next.id } })).toBe(0)
+    expect((await salesService.create(offline.ctx(), input)).duplicate).toBe(true)
   })
 
   it("cashier cannot override price; owner can", async () => {

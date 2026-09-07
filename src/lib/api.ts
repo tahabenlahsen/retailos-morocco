@@ -148,6 +148,11 @@ export function withTenant<P = Record<string, string>>(handler: Handler<P>, opti
   return async (req: NextRequest, routeCtx?: { params: Promise<P> | P }) => {
     try {
       const ctx = await getTenantContext(req)
+      const expectedBusiness = req.headers.get("X-RetailOS-Business-Id")
+      const expectedUser = req.headers.get("X-RetailOS-User-Id")
+      if ((expectedBusiness !== null && expectedBusiness !== ctx.businessId) || (expectedUser !== null && expectedUser !== ctx.userId)) {
+        throw new AppError("UNAUTHORIZED", "Session changed; please verify your session")
+      }
       if (options.permission) requirePermission(ctx, options.permission)
       if (options.rateLimit && !(await checkRateLimit(`api:${ctx.userId}:${req.nextUrl.pathname}`, options.rateLimit, 60_000))) {
         throw new AppError("RATE_LIMITED", "Too many requests. Please slow down.")

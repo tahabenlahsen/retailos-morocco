@@ -15,7 +15,7 @@ interface StoreContextValue {
   setStoreId: (id: string | null) => void
   /** Store id to use for operations that require a concrete store. */
   effectiveStoreId: string | undefined
-  stores: { id: string; name: string; city: string; isActive: boolean }[]
+  stores: { id: string; name: string; city: string; address?: string | null; phone?: string | null; isActive: boolean }[]
 }
 
 const KEY = "retailos.storeId"

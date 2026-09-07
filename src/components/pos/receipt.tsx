@@ -37,6 +37,7 @@ export function Receipt({ sale }: { sale: ReceiptSale }) {
         {sale.store.phone ? <p>{sale.store.phone}</p> : null}
       </div>
       <div className="my-2 border-t border-dashed border-black" />
+      {sale.status === "QUEUED" ? <p className="text-center font-bold" data-testid="receipt-offline">*** {t("offline.provisionalReceipt")} ***</p> : null}
       <div className="flex justify-between"><span>{sale.saleNumber}</span><span>{formatDateTime(sale.createdAt)}</span></div>
       {sale.cashierName ? <p>{t("pos.cashier")}: {sale.cashierName}</p> : null}
       {sale.customer ? <p>{t("pos.customer")}: {sale.customer.name}</p> : null}

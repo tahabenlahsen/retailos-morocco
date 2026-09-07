@@ -679,6 +679,28 @@ const fr = {
     NETWORK: "Connexion impossible. Vérifiez votre réseau.",
   },
   pwa: { install: "Installer l'application", offline: "Vous êtes hors ligne. Certaines fonctionnalités sont indisponibles." },
+  offline: {
+    title: "Ventes hors ligne",
+    description: "Les ventes encaissées sans connexion sont enregistrées sur cet appareil et envoyées automatiquement au serveur dès le retour du réseau. Une vente refusée par le serveur reste ici jusqu'à correction.",
+    offline: "Hors ligne",
+    online: "Connecté",
+    queued: "{{count}} en attente",
+    empty: "Aucune vente en attente",
+    status: { pending: "En attente", failed: "Refusée" },
+    retry: "Réessayer",
+    discard: "Supprimer",
+    discardTitle: "Supprimer la vente hors ligne ?",
+    discardText: "La vente {{ref}} sera définitivement supprimée de cet appareil et ne sera jamais envoyée au serveur. Le stock ne sera pas déduit.",
+    syncNow: "Synchroniser maintenant",
+    syncedCount: "{{count}} vente(s) synchronisée(s)",
+    failedCount: "{{count}} vente(s) refusée(s) par le serveur",
+    saleQueued: "Hors ligne : vente {{ref}} enregistrée sur cet appareil, elle sera synchronisée au retour du réseau",
+    provisionalReceipt: "TICKET PROVISOIRE — HORS LIGNE",
+    fixThenRetry: "corrigez la cause puis réessayez",
+    creditNotOffline: "Les ventes à crédit nécessitent une connexion (vérification du plafond).",
+    servedFromCache: "Données affichées depuis le cache local",
+    pendingBanner: "{{count}} vente(s) hors ligne en attente de synchronisation",
+  },
 } as const
 
 export default fr

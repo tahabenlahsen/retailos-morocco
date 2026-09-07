@@ -12,7 +12,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input"
 import { RequirePermission } from "@/components/shared/require-permission"
 import { EmptyState } from "@/components/shared/empty-state"
-import { Money } from "@/components/shared/money"
 import { ProductSearch } from "@/components/pos/product-search"
 import { CartPanel } from "@/components/pos/cart-panel"
 import { PaymentDialog, type PaymentLine } from "@/components/pos/payment-dialog"
@@ -25,8 +24,50 @@ import { useLocale } from "@/components/providers/locale-provider"
 import { useApiError } from "@/hooks/use-api-error"
 import { api, ApiError } from "@/lib/api-client"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { OfflineQueueButton } from "@/components/pos/offline-queue-dialog"
+import { useOfflineQueue, useOnline } from "@/hooks/use-offline"
+import { offlineQueue, QUEUE_SYNCED_EVENT, type SyncResult } from "@/lib/offline/queue"
+import { provisionalRef, type QueuedSale } from "@/lib/offline/queue-logic"
+import { requireOfflineIdentity, type OfflineOwner } from "@/lib/offline/identity"
 
 interface HeldCart { id: string; label: string | null; customerId: string | null; createdAt: string; items: { productId: string; quantity: number; unitPrice?: number; discount: number }[] }
+
+/** Builds the queued-sale record (and its provisional receipt) from the cart when the network is down. */
+function buildQueuedSale(cart: ReturnType<typeof useCart>, payments: PaymentLine[], storeId: string, storeName: string, key: string, owner: OfflineOwner): QueuedSale {
+  return {
+    owner: { businessId: owner.businessId, userId: owner.userId },
+    key,
+    ref: provisionalRef(key),
+    storeId,
+    storeName,
+    soldAt: new Date().toISOString(),
+    customer: cart.state.customer ? { id: cart.state.customer.id, name: cart.state.customer.name } : null,
+    lines: cart.totals.lines.map((l) => ({ productId: l.product.id, name: l.product.name, sku: l.product.sku, unit: l.product.unit, quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount, total: l.total })),
+    payments,
+    totals: { subtotal: cart.totals.subtotal, tax: cart.totals.tax, discount: cart.totals.orderDiscount, total: cart.totals.total },
+    notes: cart.state.notes || undefined,
+    status: "pending",
+    attempts: 0,
+  }
+}
+
+function queuedToReceipt(q: QueuedSale, store: { id: string; name: string; address: string | null; phone: string | null }): ReceiptSale {
+  return {
+    id: q.key,
+    saleNumber: q.ref,
+    createdAt: q.soldAt,
+    subtotal: q.totals.subtotal,
+    taxAmount: q.totals.tax,
+    discountAmount: q.totals.discount,
+    total: q.totals.total,
+    status: "QUEUED",
+    items: q.lines.map((l) => ({ id: l.productId, quantity: l.quantity, unitPrice: l.unitPrice, discount: l.discount, total: l.total, product: { name: l.name, sku: l.sku, unit: l.unit } })),
+    payments: q.payments.map((p) => ({ method: p.method, amount: p.amount, reference: p.reference ?? null })),
+    customer: q.customer ? { name: q.customer.name, phone: null } : null,
+    store,
+    cashierName: null,
+  }
+}
 
 export default function PosPage() {
   const { t } = useTranslation()
@@ -60,23 +101,65 @@ export default function PosPage() {
     ? { customerName: cart.state.customer.name, creditLimit: creditQ.data?.creditLimit ?? cart.state.customer.creditLimit ?? null, outstandingBalance: creditQ.data?.outstandingBalance ?? cart.state.customer.outstandingBalance ?? 0 }
     : undefined
 
-  const createSale = useMutation({
-    mutationFn: (payments: PaymentLine[]) =>
-      api.post<ReceiptSale>("/api/sales", { storeId: posStoreId, items: cartToItems(cart.state), customerId: cart.state.customer?.id ?? null, discountAmount: cart.totals.orderDiscount, payments, notes: cart.state.notes || undefined, idempotencyKey: idemRef.current }),
-    onSuccess: (sale) => {
-      setPayOpen(false)
-      setReceipt(sale)
-      cart.dispatch({ type: "clear" })
-      idemRef.current = crypto.randomUUID()
+  const online = useOnline()
+  useOfflineQueue() // starts background sync + keeps the queue loaded while the POS is open
+  const currentStore = stores.find((s) => s.id === posStoreId)
+
+  // When queued offline sales get synced, refresh stock/register and tell the cashier the final numbers.
+  useEffect(() => {
+    const onSynced = (e: Event) => {
+      const r = (e as CustomEvent<SyncResult>).detail
+      toast.success(t("offline.syncedCount", { count: r.synced.length }) + (r.synced.length <= 3 ? ` · ${r.synced.map((s) => s.saleNumber).join(", ")}` : ""))
+      void qc.invalidateQueries({ queryKey: ["pos-products"] })
+      void qc.invalidateQueries({ queryKey: ["pos-catalog"] })
+      void qc.invalidateQueries({ queryKey: ["register"] })
+      void qc.invalidateQueries({ queryKey: ["sales"] })
+    }
+    window.addEventListener(QUEUE_SYNCED_EVENT, onSynced)
+    return () => window.removeEventListener(QUEUE_SYNCED_EVENT, onSynced)
+  }, [qc, t])
+
+  const finishSale = (sale: ReceiptSale, queued: boolean) => {
+    setPayOpen(false)
+    setReceipt(sale)
+    cart.dispatch({ type: "clear" })
+    idemRef.current = crypto.randomUUID()
+    if (queued) toast.warning(t("offline.saleQueued", { ref: sale.saleNumber }))
+    else {
       toast.success(`${t("pos.saleComplete")} · ${sale.saleNumber}`)
       void qc.invalidateQueries({ queryKey: ["pos-products"] })
       void qc.invalidateQueries({ queryKey: ["register"] })
       void qc.invalidateQueries({ queryKey: ["customers"] })
+    }
+  }
+
+  const createSale = useMutation({
+    mutationFn: async (payments: PaymentLine[]): Promise<{ sale: ReceiptSale; queued: boolean }> => {
+      const owner = requireOfflineIdentity() // Capture before any network await; never adopt a new cashier.
+      const storeInfo = { id: posStoreId!, name: currentStore?.name ?? "", address: currentStore?.address ?? null, phone: currentStore?.phone ?? null }
+      const queue = async () => {
+        // Credit sales need a live limit check; never queue them offline.
+        if (payments.some((p) => p.method === "CREDIT")) throw new ApiError("NETWORK", t("offline.creditNotOffline"), 0)
+        const q = buildQueuedSale(cart, payments, posStoreId!, storeInfo.name, idemRef.current, owner)
+        q.registerId = register.data?.id
+        await offlineQueue.enqueue(q, owner)
+        return { sale: queuedToReceipt(q, storeInfo), queued: true }
+      }
+      if (!online) return queue()
+      try {
+        const sale = await api.post<ReceiptSale>("/api/sales", { offlineOwner: { businessId: owner.businessId, userId: owner.userId }, registerId: register.data?.id, storeId: posStoreId, items: cartToItems(cart.state), customerId: cart.state.customer?.id ?? null, discountAmount: cart.totals.orderDiscount, payments, notes: cart.state.notes || undefined, idempotencyKey: idemRef.current })
+        return { sale, queued: false }
+      } catch (err) {
+        // Connection dropped mid-sale: keep the same idempotency key so a later sync can never duplicate it.
+        if (err instanceof ApiError && err.code === "NETWORK") return queue()
+        throw err
+      }
     },
+    onSuccess: ({ sale, queued }) => finishSale(sale, queued),
     onError: (err) => {
       // Refresh stock on insufficient-stock errors so the cart reflects reality
       if (err instanceof ApiError && err.code === "INSUFFICIENT_STOCK") void qc.invalidateQueries({ queryKey: ["pos-products"] })
-      toast.error(messageFor(err))
+      toast.error(err instanceof ApiError && err.code === "NETWORK" && err.message !== "Network error" ? err.message : messageFor(err))
     },
   })
 
@@ -154,6 +237,8 @@ export default function PosPage() {
             ) : (
               <Button asChild size="sm" variant="outline" className="border-amber-500/50 text-amber-700 dark:text-amber-300"><Link href="/cash-register"><Lock className="h-4 w-4" />{t("pos.openRegister")}</Link></Button>
             )}
+            {!online ? <Badge variant="warning" data-testid="pos-offline-badge">{t("offline.offline")}</Badge> : null}
+            <OfflineQueueButton />
             <Button size="sm" variant="outline" className="ms-auto" onClick={() => setHeldOpen(true)}>
               <PauseCircle className="h-4 w-4" />{t("pos.heldCarts")} {held.data?.length ? <Badge variant="secondary" className="ms-1">{held.data.length}</Badge> : null}
             </Button>
@@ -167,7 +252,7 @@ export default function PosPage() {
         </aside>
       </div>
 
-      <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={cart.totals.total} registerOpen={registerOpen} credit={creditInfo} canCredit={can("sale.credit")} onConfirm={(p) => createSale.mutateAsync(p).then(() => undefined, () => undefined)} />
+      <PaymentDialog open={payOpen} onOpenChange={setPayOpen} total={cart.totals.total} registerOpen={registerOpen} credit={creditInfo} canCredit={online && can("sale.credit")} onConfirm={(p) => createSale.mutateAsync(p).then(() => undefined, () => undefined)} />
       <CustomerPicker open={customerOpen} onOpenChange={setCustomerOpen} onSelect={(c) => cart.dispatch({ type: "setCustomer", customer: c })} />
 
       {/* Hold prompt */}

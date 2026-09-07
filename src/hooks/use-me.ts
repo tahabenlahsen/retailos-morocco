@@ -7,7 +7,7 @@ import type { Permission } from "@/lib/permissions"
 export interface Me {
   user: { id: string; email: string; firstName: string; lastName: string; phone: string | null; avatar: string | null; lastLoginAt: string | null }
   business: { id: string; name: string; type: string; currency: string; taxRate: number; logo: string | null; onboarded: boolean; subscriptionPlan: string }
-  stores: { id: string; name: string; city: string; isActive: boolean }[]
+  stores: { id: string; name: string; city: string; address?: string | null; phone?: string | null; isActive: boolean }[]
   role: string
   permissions: Permission[]
 }

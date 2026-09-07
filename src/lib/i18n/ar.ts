@@ -91,6 +91,14 @@ const ar = {
   },
   errors: { VALIDATION_ERROR: "بيانات غير صالحة", UNAUTHORIZED: "انتهت الجلسة، يرجى تسجيل الدخول مجدداً", FORBIDDEN: "إجراء غير مسموح", NOT_FOUND: "العنصر غير موجود", CONFLICT: "تعارض مع بيانات موجودة", INSUFFICIENT_STOCK: "مخزون غير كافٍ", REGISTER_CLOSED: "الصندوق مغلق", REGISTER_ALREADY_OPEN: "هناك صندوق مفتوح بالفعل", PAYMENT_MISMATCH: "المدفوعات لا تطابق المجموع", CREDIT_NOT_ALLOWED: "هذا العميل ليس لديه حد ائتمان. حدّد واحداً في ملفه أولاً.", CREDIT_LIMIT_EXCEEDED: "تم تجاوز حد الائتمان", REFUND_EXCEEDS_CREDIT: "المبلغ يتجاوز الدين المتبقي على هذه العملية", NO_OUTSTANDING_BALANCE: "هذا العميل ليس لديه رصيد مستحق", INVALID_STATE: "العملية غير ممكنة في الحالة الحالية", RATE_LIMITED: "طلبات كثيرة، يرجى الانتظار", INTERNAL_ERROR: "خطأ في الخادم، حاول مجدداً", NETWORK: "تعذر الاتصال. تحقق من الشبكة." },
   pwa: { install: "تثبيت التطبيق", offline: "أنت غير متصل. بعض الميزات غير متاحة." },
+  offline: {
+    title: "المبيعات دون اتصال", description: "تُحفظ المبيعات المسجّلة بدون اتصال على هذا الجهاز وتُرسل تلقائياً إلى الخادم عند عودة الشبكة. تبقى هنا أي عملية يرفضها الخادم حتى تصحيح السبب.",
+    offline: "غير متصل", online: "متصل", queued: "{{count}} قيد الانتظار", empty: "لا توجد مبيعات معلّقة", status: { pending: "قيد الانتظار", failed: "مرفوضة" },
+    retry: "إعادة المحاولة", discard: "حذف", discardTitle: "حذف عملية البيع دون اتصال؟", discardText: "ستُحذف العملية {{ref}} نهائياً من هذا الجهاز ولن تُرسل إلى الخادم أبداً. لن يُخصم المخزون.",
+    syncNow: "مزامنة الآن", syncedCount: "تمت مزامنة {{count}} عملية", failedCount: "رفض الخادم {{count}} عملية",
+    saleQueued: "دون اتصال: حُفظت العملية {{ref}} على هذا الجهاز وستُزامَن عند عودة الشبكة", provisionalReceipt: "إيصال مؤقت — دون اتصال",
+    fixThenRetry: "صحّح السبب ثم أعد المحاولة", creditNotOffline: "المبيعات بالدين تحتاج اتصالاً (التحقق من الحد).", servedFromCache: "البيانات معروضة من الذاكرة المحلية", pendingBanner: "{{count}} عملية دون اتصال بانتظار المزامنة",
+  },
 } satisfies Translation
 
 export default ar

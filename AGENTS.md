@@ -36,5 +36,10 @@ npm run build              # production build must be clean
 - `.env` must be UTF-8 (PowerShell `echo >` writes UTF-16 and breaks dotenv).
 - If Turbopack throws `TurbopackInternalError` after config changes, delete `.next` and restart `next dev`.
 
+## Non-destructive verification
+- PowerShell: `$env:UNIT_ONLY="1"; npx vitest run` runs only unit tests without database setup. Remove the process environment override before running integration tests.
+- PowerShell: `$env:REUSE_TEST_DATABASE="1"; npm run test:pg` reuses the existing dedicated `*_test` database without resetting it. Integration fixtures create their own records.
+- Do not run `db:reset`, `prisma migrate reset`, or the default integration setup against existing data without explicit confirmation. A Git commit does not back up local database contents.
+
 ## Demo logins (password `Demo12345`)
 owner@demo.ma · manager@demo.ma · cashier@demo.ma · owner@boutique.ma (separate tenant)

@@ -5,8 +5,8 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
-    globalSetup: ["tests/setup/global.ts"],
+    include: process.env.UNIT_ONLY === "1" ? ["tests/unit/**/*.test.ts"] : ["tests/**/*.test.ts"],
+    globalSetup: process.env.UNIT_ONLY === "1" ? [] : ["tests/setup/global.ts"],
     setupFiles: ["tests/setup/env.ts"],
     // Integration tests share one SQLite file: run files sequentially to avoid write locks.
     fileParallelism: false,

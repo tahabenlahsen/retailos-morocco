@@ -78,6 +78,18 @@ export const productService = {
     return { items, total, page: q.page, pageSize: q.pageSize }
   },
 
+  /** Full active catalogue of a store (light fields) — downloaded by the POS for offline scanning. */
+  async catalog(ctx: TenantContext, storeId: string | undefined) {
+    const sid = resolveStoreId(ctx, storeId)
+    const items = await prisma.product.findMany({
+      where: { businessId: ctx.businessId, storeId: sid, deletedAt: null, isActive: true },
+      select: { id: true, name: true, sku: true, barcode: true, sellingPrice: true, taxRate: true, stockQuantity: true, unit: true, image: true, category: { select: { id: true, name: true } } },
+      orderBy: { name: "asc" },
+      take: 5000,
+    })
+    return { storeId: sid, at: new Date().toISOString(), items }
+  },
+
   /** Fast lookup for POS: exact barcode or SKU match, then name search. */
   async lookup(ctx: TenantContext, storeId: string | undefined, term: string, limit = 20) {
     const sid = resolveStoreId(ctx, storeId)

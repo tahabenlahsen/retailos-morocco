@@ -18,6 +18,7 @@ import { useStore } from "@/components/providers/store-provider"
 import { useLocale } from "@/components/providers/locale-provider"
 import { LOCALE_LABELS, LOCALES } from "@/lib/i18n"
 import { api } from "@/lib/api-client"
+import { clearOfflineIdentity } from "@/lib/offline/identity"
 import { Sidebar } from "./sidebar"
 import { EmptyState } from "@/components/shared/empty-state"
 
@@ -121,7 +122,7 @@ export function Topbar() {
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => router.push("/settings?tab=profile")}><User />{t("nav.profile")}</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem destructive onClick={() => void signOut({ callbackUrl: "/auth/signin" })}><LogOut />{t("nav.logout")}</DropdownMenuItem>
+            <DropdownMenuItem destructive onClick={() => { clearOfflineIdentity(); void signOut({ callbackUrl: "/auth/signin" }) }}><LogOut />{t("nav.logout")}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

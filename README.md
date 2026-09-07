@@ -29,7 +29,7 @@ All-in-one business management platform for small and medium Moroccan retail bus
 | **Notifications** | In-app: low/out of stock (de-duplicated), large expense, register discrepancy, purchase received, sales decrease (daily cron). Email transport via SMTP when configured; WhatsApp is **not** implemented (architecture hook only) |
 | **Employees & stores** | Invite users with role + store assignment, activate/suspend, reset password; create/edit/delete stores with safety checks |
 | **Audit log** | Login, product/price/stock changes, sales, refunds, cancellations, register operations, purchases, expenses, user/role/store changes — with user, IP and metadata |
-| **PWA** | Web manifest, icons, service worker (cache-first static assets, network-first pages with offline fallback, **API never cached**), install prompt, offline banner |
+| **PWA** | Manifest, icons, public static-asset cache, generic offline navigation fallback; authenticated POS catalogue and sale queue in user/business-scoped IndexedDB |
 | **Security** | Zod validation on every input, Prisma (parameterised SQL), CSP + HSTS + frame/sniff protection, secure cookies, rate limiting, secrets only server-side, user-safe error messages |
 
 ## Tech stack
@@ -66,7 +66,7 @@ Secrets live only in environment variables; nothing sensitive is bundled into th
 
 ## Database
 
-The Prisma schema is provider-neutral. Local development can use SQLite (no install); production uses PostgreSQL. **Both paths are verified**: the full test suite (82 tests), the API smoke suite and the e2e suite run green on PostgreSQL 17 and on SQLite.
+The Prisma schema is provider-neutral. Local development can use SQLite (no install); production targets PostgreSQL. The original baseline was checked with both engines. The latest credit/offline changes are being verified on PostgreSQL 17; a fresh SQLite verification is still required before claiming current provider parity.
 
 ```bash
 # 1. point DATABASE_URL at your database in .env, then align the schema provider with it
@@ -101,7 +101,9 @@ Key integrity rules enforced in code and covered by tests:
 |---|---|
 | `npm run dev` / `build` / `start` | Next.js dev server / production build / production server |
 | `npm run typecheck` · `npm run lint` | TypeScript · ESLint |
-| `npm test` | Vitest unit + integration tests on SQLite (`prisma/test.db`, 82 tests) |
+| `npm test` | Vitest unit + integration tests on SQLite; default setup resets `prisma/test.db` |
+| PowerShell: `$env:UNIT_ONLY="1"; npx vitest run` | Unit tests only, without database setup |
+| PowerShell: `$env:REUSE_TEST_DATABASE="1"; npm run test:pg` | Reuse an existing dedicated `*_test` PostgreSQL database without resetting it |
 | `npm run test:pg` | Same suite against PostgreSQL (`<db>_test` derived from `DATABASE_URL`) |
 | `npm run test:e2e` | Playwright end-to-end tests (desktop + tablet) against the seeded dev server |
 | `npm run test:smoke` | API, page and search smoke tests against a running dev server (`scripts/smoke.mjs`, `pages.mjs`, `search-check.mjs`; also `integrations-check.mjs`, `ai-check.mjs`) |
@@ -176,15 +178,15 @@ All UI strings live in `src/lib/i18n/{fr,ar,en}.ts` (type-checked against the Fr
 
 ## Known limitations / future improvements
 
-- **Offline POS**: pages and assets are cached, but sales cannot be created offline (no write queue / conflict resolution). Documented deliberately rather than claimed.
+- **Offline POS**: an already-open, server-authenticated POS can scan its downloaded catalogue and persist non-credit sales in IndexedDB, issue provisional receipts, and retry with the original idempotency key. A cold start/reload needs a connection to verify identity; authenticated HTML is not cached. Queues/catalogues are scoped by business and user; logout hides rather than deletes pending sales. Legacy ownerless queue entries are retained on disk but never automatically adopted. Cash tickets are bound to their original register; tickets rejected after register closure require manual accounting reconciliation, not automatic posting to the next register. Browser-profile loss/clearing storage can lose unsynced tickets. Cross-device stock reservations and offline card authorisation are not provided.
 - **WhatsApp notifications**: architecture hook only; no provider integrated.
 - **Rate limiter** is Redis-backed when `REDIS_URL` is set (shared across instances) and falls back to in-memory otherwise.
 - **Subscriptions/billing** (`subscriptionPlan` field exists) — no payment provider integration yet.
 - **Product images** are URLs; no upload/storage service.
 - **Email verification** flow exists in the data model (`emailVerified`) but is not enforced at login.
 - Loyalty programme is a simple points ledger; tiers/redemption not implemented.
-- Reports are on-screen; PDF/Excel export is a natural next step (CSV export exists for products).
-- Customer credit sales (`outstandingBalance`) are tracked in the model but the POS only supports fully-paid sales.
+- PDF/CSV exports are available for receipts and seven accounting reports. Arabic PDF rendering uses Amiri and a limited word-order correction, not a complete bidirectional-layout implementation; complex mixed-script text needs further validation.
+- Customer credit sales, manager-set limits and repayments are implemented. **Release blockers:** repayment requests still need server-side idempotency and concurrent settlement/refund hardening. Cash-register closure versus other concurrent cash operations also needs a complete concurrency audit. Passing happy-path tests does not establish production readiness.
 
 ## Licence
 
