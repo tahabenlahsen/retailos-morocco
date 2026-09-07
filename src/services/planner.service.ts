@@ -145,6 +145,27 @@ const PROFILES: Record<string, Profile> = {
     inventoryShare: 0.15,
     rentPerM2: 130,
   },
+  COFFEE_SHOP: {
+    categories: [
+      { name: "Café & thé", share: 0.3 },
+      { name: "Lait & boissons", share: 0.25 },
+      { name: "Pâtisserie & snacks", share: 0.25 },
+      { name: "Sucre, sirops & consommables", share: 0.2 },
+    ],
+    avgBasket: 30,
+    grossMargin: 0.65,
+    equipment: [
+      { item: "Machine espresso professionnelle + moulin", cost: 45000, essential: true },
+      { item: "Caisse / TPV + TPE", cost: 7000, essential: true },
+      { item: "Comptoir & vitrine réfrigérée", cost: 18000, essential: true },
+      { item: "Mobilier salle (tables, chaises)", cost: 15000, essential: true },
+      { item: "Réfrigérateur & machine à glaçons", cost: 10000, essential: true },
+      { item: "Four / grille-pain & petit équipement", cost: 6000, essential: false },
+      { item: "Enseigne & terrasse", cost: 12000, essential: false },
+    ],
+    inventoryShare: 0.2,
+    rentPerM2: 140,
+  },
   PHARMACY: {
     categories: [
       { name: "Parapharmacie", share: 0.4 },

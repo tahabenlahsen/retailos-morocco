@@ -166,6 +166,7 @@ const fr = {
       ELECTRONICS: "Électronique",
       COSMETICS: "Cosmétiques",
       RESTAURANT: "Restaurant / Snack",
+      COFFEE_SHOP: "Café / Coffee shop",
       PHARMACY: "Parapharmacie",
       OTHER: "Autre",
     },

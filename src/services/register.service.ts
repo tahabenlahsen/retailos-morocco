@@ -53,6 +53,9 @@ export const registerService = {
       if (summary.expected + signed < 0) throw invalidState("Withdrawal exceeds cash in register")
     }
     return prisma.$transaction(async (tx) => {
+      // Serialise against a concurrent close.
+      const locked = await tx.cashRegister.updateMany({ where: { id: reg.id, status: "OPEN" }, data: { status: "OPEN" } })
+      if (locked.count !== 1) throw invalidState("Register was closed concurrently")
       const t = await tx.cashRegisterTransaction.create({ data: { type: input.type, amount: signed, reason: input.reason, cashRegisterId: reg.id, businessId: ctx.businessId, storeId: reg.storeId, userId: ctx.userId } })
       await writeAuditLog({ businessId: ctx.businessId, userId: ctx.userId, action: "REGISTER_TRANSACTION", entityType: "CashRegister", entityId: reg.id, metadata: { type: input.type, amount: input.amount, reason: input.reason }, ipAddress: ctx.ip }, tx)
       return t
@@ -64,21 +67,27 @@ export const registerService = {
     if (!reg) throw notFound("Cash register")
     if (reg.status !== "OPEN") throw invalidState("Register is already closed")
     if (reg.openedBy !== ctx.userId && !hasPermission(ctx.role, "register.viewAll")) throw forbidden("Only the cashier who opened this register or a manager can close it")
-    const { summary } = await this.computeExpected(reg.id)
-    const difference = round2(input.actualBalance - summary.expected)
-    if (Math.abs(difference) >= 0.01 && !input.differenceReason?.trim()) {
-      throw new AppError("VALIDATION_ERROR", "A reason is required when the counted cash differs from the expected amount", { expected: summary.expected, difference })
-    }
     const closed = await prisma.$transaction(async (tx) => {
-      const c = await tx.cashRegister.update({
-        where: { id: reg.id },
-        data: { status: "CLOSED", closedAt: new Date(), closedBy: ctx.userId, expectedBalance: summary.expected, actualBalance: input.actualBalance, closingBalance: input.actualBalance, difference, differenceReason: input.differenceReason },
-      })
-      await writeAuditLog({ businessId: ctx.businessId, userId: ctx.userId, action: "REGISTER_CLOSED", entityType: "CashRegister", entityId: reg.id, metadata: { expected: summary.expected, actual: input.actualBalance, difference, reason: input.differenceReason }, ipAddress: ctx.ip }, tx)
-      return c
+      // Serialise against any concurrent cash movement (sale/refund/repayment/deposit/withdrawal):
+      // the guarded update only succeeds while the register is still OPEN, so a sale that lands
+      // between the read above and this write either commits first (we then recompute) or is rejected.
+      const locked = await tx.cashRegister.updateMany({ where: { id: reg.id, status: "OPEN" }, data: { status: "CLOSED", closedAt: new Date(), closedBy: ctx.userId } })
+      if (locked.count !== 1) throw invalidState("Register state changed concurrently; please reopen and retry")
+      // Recompute expected cash *inside* the lock so concurrent sales that committed just before
+      // the lock are reflected in the closing balance.
+      const fresh = await tx.cashRegister.findUniqueOrThrow({ where: { id: reg.id }, include: { transactions: true } })
+      const by = (type: string) => sum(fresh.transactions.filter((t) => t.type === type).map((t) => t.amount))
+      const expected = round2(fresh.openingBalance + by("SALE") + by("REFUND") + by("DEPOSIT") + by("WITHDRAWAL") + by("CUSTOMER_PAYMENT"))
+      const difference = round2(input.actualBalance - expected)
+      if (Math.abs(difference) >= 0.01 && !input.differenceReason?.trim()) {
+        throw new AppError("VALIDATION_ERROR", "A reason is required when the counted cash differs from the expected amount", { expected, difference })
+      }
+      const c = await tx.cashRegister.update({ where: { id: reg.id }, data: { expectedBalance: expected, actualBalance: input.actualBalance, closingBalance: input.actualBalance, difference, differenceReason: input.differenceReason } })
+      await writeAuditLog({ businessId: ctx.businessId, userId: ctx.userId, action: "REGISTER_CLOSED", entityType: "CashRegister", entityId: reg.id, metadata: { expected, actual: input.actualBalance, difference, reason: input.differenceReason }, ipAddress: ctx.ip }, tx)
+      return { c, expected }
     })
-    await notificationService.registerDiscrepancy(ctx.businessId, { id: reg.id, name: reg.name, difference, reason: input.differenceReason })
-    return { ...closed, summary }
+    await notificationService.registerDiscrepancy(ctx.businessId, { id: reg.id, name: reg.name, difference: round2(input.actualBalance - closed.expected), reason: input.differenceReason })
+    return { ...closed.c, summary: { expected: closed.expected } }
   },
 
   async history(ctx: TenantContext, q: { storeId?: string; page: number; pageSize: number }) {

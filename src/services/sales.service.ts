@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client"
 import { prisma, icontains } from "@/lib/prisma"
-import { AppError, forbidden, invalidState, notFound, validation } from "@/lib/errors"
+import { AppError, conflict, forbidden, invalidState, notFound, validation } from "@/lib/errors"
+import { lockOpenRegister } from "./register-lock"
 import { writeAuditLog } from "@/lib/audit"
 import type { TenantContext } from "@/lib/api"
 import { resolveStoreId } from "@/lib/api"
@@ -58,7 +59,9 @@ export async function settleCustomerCredit(tx: Tx, businessId: string, customerI
     const due = round2(p.amount - p.settledAmount)
     const apply = Math.min(due, remaining)
     const settled = round2(p.settledAmount + apply)
-    await tx.payment.update({ where: { id: p.id }, data: { settledAmount: settled, status: settled >= p.amount - 0.009 ? "PAID" : "PENDING" } })
+    // Guarded write: another transaction that settled this line first makes the count 0.
+    const changed = await tx.payment.updateMany({ where: { id: p.id, settledAmount: p.settledAmount, status: "PENDING" }, data: { settledAmount: settled, status: settled >= p.amount - 0.009 ? "PAID" : "PENDING" } })
+    if (changed.count !== 1) throw conflict("This credit line was modified by another operation; please retry")
     remaining = round2(remaining - apply)
     touchedSales.add(p.saleId)
   }
@@ -181,10 +184,7 @@ export const salesService = {
           duplicate = true
           return repeated
         }
-        if (cashAmount > 0 && register) {
-          const open = await tx.cashRegister.updateMany({ where: { id: register.id, businessId: ctx.businessId, storeId, status: "OPEN" }, data: { status: "OPEN" } })
-          if (open.count !== 1) throw new AppError("REGISTER_CLOSED", "The original register is closed; reconcile this sale before retrying")
-        }
+        if (cashAmount > 0 && register) await lockOpenRegister(tx, { id: register.id, businessId: ctx.businessId, storeId })
         const saleNumber = await nextSaleNumber(tx, ctx.businessId)
         const created = await tx.sale.create({
           data: {
@@ -310,9 +310,16 @@ export const salesService = {
    * Full or partial refund. Creates a Refund, restocks items (unless damaged),
    * records negative register transaction for cash refunds, updates sale status.
    */
-  async refund(ctx: TenantContext, saleId: string, input: { items: { saleItemId: string; quantity: number }[]; reason: string; paymentMethod: SalePaymentMethod; restock: boolean }) {
+  async refund(ctx: TenantContext, saleId: string, input: { items: { saleItemId: string; quantity: number }[]; reason: string; paymentMethod: SalePaymentMethod; restock: boolean; refundId?: string }) {
     const sale = await prisma.sale.findFirst({ where: { id: saleId, businessId: ctx.businessId, storeId: { in: ctx.storeIds } }, include: { items: true, refunds: true, payments: true, customer: { select: { id: true, outstandingBalance: true } } } })
     if (!sale) throw notFound("Sale")
+
+    // Idempotency fast-path: a previous request with this refundId already committed.
+    if (input.refundId) {
+      const existing = await prisma.refund.findUnique({ where: { idempotencyKey: input.refundId } })
+      if (existing) return existing
+    }
+
     if (sale.status === "CANCELLED") throw invalidState("Cannot refund a cancelled sale")
     if (sale.status === "REFUNDED") throw invalidState("Sale is already fully refunded")
     if (input.paymentMethod === "CREDIT" && !sale.customer) throw validation("Refund to credit requires a customer on the sale")
@@ -355,9 +362,31 @@ export const salesService = {
 
     const result = await withUniqueRetry(() =>
       prisma.$transaction(async (tx) => {
+        // Lock the sale row so two concurrent refunds serialise here.
+        const locked = await tx.sale.updateMany({ where: { id: sale.id, status: { in: ["COMPLETED", "PARTIALLY_REFUNDED"] } }, data: { updatedAt: new Date() } })
+        if (locked.count !== 1) throw conflict("This sale was modified by another operation; please retry")
+        // Re-check idempotency inside the transaction.
+        if (input.refundId) {
+          const raced = await tx.refund.findUnique({ where: { idempotencyKey: input.refundId } })
+          if (raced) return raced
+        }
+        // Re-read refunds inside the lock to recompute remaining quantities.
+        const freshRefunds = await tx.refund.findMany({ where: { saleId: sale.id } })
+        const refundedNow = new Map<string, number>()
+        for (const r of freshRefunds) {
+          const items = JSON.parse(r.items) as { saleItemId: string; quantity: number }[]
+          for (const it of items) refundedNow.set(it.saleItemId, (refundedNow.get(it.saleItemId) ?? 0) + it.quantity)
+        }
+        for (const ri of refundLines) {
+          const si = itemMap.get(ri.saleItemId)!
+          const remaining = si.quantity - (refundedNow.get(si.id) ?? 0)
+          if (ri.quantity > remaining) throw conflict(`Cannot refund ${ri.quantity}; only ${remaining} remaining for this item (concurrent refund detected)`)
+        }
         const refundNumber = await nextRefundNumber(tx, ctx.businessId)
         const refund = await tx.refund.create({
           data: {
+            id: input.refundId,
+            idempotencyKey: input.refundId,
             refundNumber,
             amount: refundAmount,
             reason: input.reason,
@@ -379,6 +408,8 @@ export const salesService = {
           // Record damaged/lost movement with zero stock change for traceability? No: we simply don't restock.
         }
         if (register) {
+          // Serialise against the register so a concurrent close cannot land first.
+          await lockOpenRegister(tx, { id: register.id, businessId: ctx.businessId, storeId: sale.storeId })
           await tx.cashRegisterTransaction.create({
             data: { type: "REFUND", amount: -refundAmount, reason: `Refund ${refundNumber}`, cashRegisterId: register.id, businessId: ctx.businessId, storeId: sale.storeId, userId: ctx.userId },
           })
@@ -386,7 +417,8 @@ export const salesService = {
         if (input.paymentMethod === "CREDIT" && sale.customerId) {
           // Cancel the customer's debt instead of handing money back: settle this sale's credit lines first.
           const settled = await settleCustomerCredit(tx, ctx.businessId, sale.customerId, refundAmount, sale.id)
-          await tx.customer.update({ where: { id: sale.customerId }, data: { outstandingBalance: { decrement: settled } } })
+          const decremented = await tx.customer.updateMany({ where: { id: sale.customerId, outstandingBalance: { gte: settled - 0.009 } }, data: { outstandingBalance: { decrement: settled } } })
+          if (decremented.count !== 1) throw conflict("Customer balance changed concurrently; please retry")
         }
         const stillOwed = await tx.payment.count({ where: { saleId: sale.id, status: "PENDING" } })
         await tx.sale.update({ where: { id: sale.id }, data: { status: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED", paymentStatus: fullyRefunded ? "REFUNDED" : stillOwed ? sale.paymentStatus : "PAID" } })
@@ -418,15 +450,25 @@ export const salesService = {
     if (creditLines.some((p) => p.settledAmount > 0.009)) throw invalidState("Part of this credit sale has already been repaid; issue a refund instead")
     const credit = sum(creditLines.map((p) => p.amount))
     await prisma.$transaction(async (tx) => {
+      // Lock the sale row; a concurrent refund or repayment will conflict here.
+      const locked = await tx.sale.updateMany({ where: { id: sale.id, status: "COMPLETED" }, data: { updatedAt: new Date() } })
+      if (locked.count !== 1) throw conflict("This sale was modified by another operation; please retry")
+      // Re-check credit lines inside the lock: a repayment may have settled one concurrently.
+      const freshCredit = await tx.payment.findMany({ where: { saleId: sale.id, method: "CREDIT" } })
+      if (freshCredit.some((p) => p.settledAmount > 0.009)) throw conflict("Part of this credit sale was repaid concurrently; issue a refund instead")
       for (const it of sale.items) {
         await applyStockChange(tx, ctx, { productId: it.productId, delta: it.quantity, type: "RETURN", reason: `Cancelled ${sale.saleNumber}`, referenceId: sale.id, referenceType: "Sale" })
       }
       if (cash > 0 && sale.cashRegisterId) {
+        await lockOpenRegister(tx, { id: sale.cashRegisterId, businessId: ctx.businessId, storeId: sale.storeId })
         await tx.cashRegisterTransaction.create({ data: { type: "REFUND", amount: -cash, reason: `Cancelled ${sale.saleNumber}`, cashRegisterId: sale.cashRegisterId, businessId: ctx.businessId, storeId: sale.storeId, userId: ctx.userId } })
       }
       await tx.payment.updateMany({ where: { saleId: sale.id }, data: { status: "REFUNDED" } })
       await tx.sale.update({ where: { id: sale.id }, data: { status: "CANCELLED", paymentStatus: "REFUNDED", notes: [sale.notes, `Cancelled: ${reason}`].filter(Boolean).join("\n") } })
-      if (sale.customerId) await tx.customer.update({ where: { id: sale.customerId }, data: { totalSpending: { decrement: sale.total }, outstandingBalance: credit > 0 ? { decrement: credit } : undefined } })
+      if (sale.customerId) {
+        const decremented = await tx.customer.updateMany({ where: { id: sale.customerId, outstandingBalance: { gte: credit - 0.009 } }, data: { totalSpending: { decrement: sale.total }, outstandingBalance: credit > 0 ? { decrement: credit } : undefined } })
+        if (decremented.count !== 1) throw conflict("Customer balance changed concurrently; please retry")
+      }
       await writeAuditLog({ businessId: ctx.businessId, userId: ctx.userId, action: "SALE_CANCELLED", entityType: "Sale", entityId: sale.id, metadata: { reason, total: sale.total }, ipAddress: ctx.ip }, tx)
     })
     return this.getById(ctx, saleId)

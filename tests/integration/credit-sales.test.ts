@@ -4,6 +4,7 @@ import { salesService } from "@/services/sales.service"
 import { customerService } from "@/services/customer.service"
 import { registerService } from "@/services/register.service"
 import { createBusiness, createProduct, openRegister, type TestBusiness } from "../setup/factory"
+import { round2 } from "@/utils/money"
 
 const key = () => `idem-${Math.random().toString(36).slice(2)}-${Date.now()}`
 
@@ -159,6 +160,53 @@ describe("credit ('crédit') sales", () => {
     expect(r.debtors.find((d) => d.id === b.customerId)?.outstandingBalance).toBe(90)
     expect(r.total).toBeGreaterThanOrEqual(90)
     await expect(customerService.remove(b.ctx(), b.customerId)).rejects.toMatchObject({ code: "CONFLICT" })
+  })
+
+  it("records a repeated repayment request (same paymentId) only once, even when simultaneous", async () => {
+    const { sale } = await creditSale(100) // balance 190
+    const before = (await prisma.customer.findUniqueOrThrow({ where: { id: b.customerId } })).outstandingBalance
+    const paymentId = crypto.randomUUID()
+    const input = { amount: 40, method: "BANK_TRANSFER" as const, paymentId }
+    const results = await Promise.all([customerService.recordPayment(b.ctx(), b.customerId, input), customerService.recordPayment(b.ctx(), b.customerId, input)])
+    expect(results[0].payment.id).toBe(paymentId)
+    expect(results[1].payment.id).toBe(paymentId)
+    expect(await prisma.customerPayment.count({ where: { id: paymentId } })).toBe(1)
+    const after = await prisma.customer.findUniqueOrThrow({ where: { id: b.customerId } })
+    expect(after.outstandingBalance).toBe(round2(before - 40))
+    // A third call with the same id but a different amount is a conflict, not a silent duplicate
+    await expect(customerService.recordPayment(b.ctx(), b.customerId, { ...input, amount: 10 })).rejects.toMatchObject({ code: "CONFLICT" })
+    expect((await prisma.customer.findUniqueOrThrow({ where: { id: b.customerId } })).outstandingBalance).toBe(round2(before - 40))
+    void sale
+  })
+
+  it("never lets simultaneous repayments push the balance below zero", async () => {
+    const debtor = await prisma.customer.create({ data: { name: "Racer", creditLimit: 1000, businessId: b.businessId } })
+    await salesService.create(b.ctx(), { items: [{ productId, quantity: 1, discount: 0 }], discountAmount: 0, customerId: debtor.id, payments: [{ amount: 100, method: "CREDIT" }], idempotencyKey: key() })
+    const attempts = await Promise.allSettled([60, 60, 60].map((amount) => customerService.recordPayment(b.ctx(), debtor.id, { amount, method: "BANK_TRANSFER" })))
+    const ok = attempts.filter((a) => a.status === "fulfilled")
+    expect(ok).toHaveLength(1)
+    for (const a of attempts) if (a.status === "rejected") expect(["VALIDATION_ERROR", "CONFLICT", "NO_OUTSTANDING_BALANCE"]).toContain((a.reason as { code: string }).code)
+    const after = await prisma.customer.findUniqueOrThrow({ where: { id: debtor.id } })
+    expect(after.outstandingBalance).toBe(40)
+    const settled = await prisma.payment.aggregate({ where: { sale: { customerId: debtor.id }, method: "CREDIT" }, _sum: { settledAmount: true } })
+    expect(settled._sum.settledAmount).toBe(60)
+  })
+
+  it("refuses to cancel a credit sale that is being repaid at the same time (no double reversal)", async () => {
+    const debtor = await prisma.customer.create({ data: { name: "Cancel race", creditLimit: 1000, businessId: b.businessId } })
+    const { sale } = await salesService.create(b.ctx(), { items: [{ productId, quantity: 1, discount: 0 }], discountAmount: 0, customerId: debtor.id, payments: [{ amount: 100, method: "CREDIT" }], idempotencyKey: key() })
+    const outcomes = await Promise.allSettled([customerService.recordPayment(b.ctx(), debtor.id, { amount: 100, method: "BANK_TRANSFER" }), salesService.cancel(b.ctx(), sale.id, "race")])
+    const after = await prisma.customer.findUniqueOrThrow({ where: { id: debtor.id } })
+    const fresh = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id }, include: { payments: true } })
+    if (fresh.status === "CANCELLED") {
+      expect(outcomes[0].status).toBe("rejected")
+      expect(after.outstandingBalance).toBe(0)
+    } else {
+      expect(outcomes[1].status).toBe("rejected")
+      expect(after.outstandingBalance).toBe(0)
+      expect(fresh.payments[0]).toMatchObject({ settledAmount: 100, status: "PAID" })
+    }
+    expect(after.outstandingBalance).toBeGreaterThanOrEqual(0)
   })
 
   it("is tenant-isolated: another business cannot record payments or read receivables of this customer", async () => {

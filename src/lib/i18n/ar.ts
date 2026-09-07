@@ -13,7 +13,7 @@ const ar = {
   },
   onboarding: {
     title: "لنقم بإعداد متجرك", subtitle: "بعض المعلومات للبدء. يمكنك تغيير كل شيء لاحقاً.", step1: "متجرك", step2: "معلومات الاتصال", step3: "المتجر الأول", businessName: "اسم المتجر التجاري", businessType: "نوع النشاط", ownerName: "اسم المالك", taxRate: "الضريبة الافتراضية", currency: "العملة", storeName: "اسم المتجر", storeNameHint: "مثال: محل المعاريف، المتجر الرئيسي…", finish: "إنهاء الإعداد",
-    types: { MINI_MARKET: "سوبرماركت صغير", GROCERY: "بقالة / مواد غذائية", CLOTHING: "ملابس", ELECTRONICS: "إلكترونيات", COSMETICS: "مستحضرات تجميل", RESTAURANT: "مطعم / سناك", PHARMACY: "شبه صيدلية", OTHER: "أخرى" },
+    types: { MINI_MARKET: "سوبرماركت صغير", GROCERY: "بقالة / مواد غذائية", CLOTHING: "ملابس", ELECTRONICS: "إلكترونيات", COSMETICS: "مستحضرات تجميل", RESTAURANT: "مطعم / سناك", COFFEE_SHOP: "مقهى", PHARMACY: "شبه صيدلية", OTHER: "أخرى" },
   },
   dashboard: { title: "لوحة التحكم", revenue: "المبيعات", grossProfit: "الربح الإجمالي", netProfit: "الربح الصافي", transactions: "المعاملات", aov: "متوسط السلة", expenses: "المصاريف", inventoryValue: "قيمة المخزون (التكلفة)", lowStock: "مخزون منخفض", outOfStock: "نفد", topProducts: "المنتجات الأكثر مبيعاً", salesTrend: "تطور المبيعات", paymentMethods: "طرق الدفع", recentSales: "آخر المبيعات", lowStockProducts: "منتجات تحتاج إعادة تموين", noLowStock: "لا توجد منتجات بمخزون منخفض", noSales: "لا توجد مبيعات في هذه الفترة", grossMargin: "هامش الربح الإجمالي", netMargin: "هامش الربح الصافي", cogs: "تكلفة البضاعة المباعة", refunds: "المرتجعات", profit: "الربح", openRegister: "فتح الصندوق", goToPos: "الذهاب إلى نقطة البيع", registerOpen: "الصندوق مفتوح", registerClosed: "الصندوق مغلق" },
   pos: {

@@ -11,6 +11,7 @@ export const BUSINESS_TYPES = [
   "ELECTRONICS",
   "COSMETICS",
   "RESTAURANT",
+  "COFFEE_SHOP",
   "PHARMACY",
   "OTHER",
 ] as const
@@ -318,6 +319,8 @@ export const refundSchema = z.object({
   paymentMethod: z.enum(SALE_PAYMENT_METHODS).default("CASH"),
   /** If true, items are restocked. False for damaged goods. */
   restock: z.boolean().default(true),
+  /** Optional idempotency key — a repeated request with the same key returns the original refund. */
+  refundId: uuid.optional(),
 })
 
 export const customerPaymentSchema = z.object({
@@ -326,6 +329,8 @@ export const customerPaymentSchema = z.object({
   reference: z.string().trim().max(120).optional().or(z.literal("").transform(() => undefined)),
   notes: z.string().trim().max(300).optional().or(z.literal("").transform(() => undefined)),
   storeId: uuid.optional(),
+  /** Optional idempotency key — a repeated request with the same key returns the original payment. */
+  paymentId: uuid.optional(),
 })
 
 export const heldCartSchema = z.object({

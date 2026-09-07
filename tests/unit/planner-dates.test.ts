@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 import { plan } from "@/services/planner.service"
 import { resolveDateRange, previousRange, daysInRange } from "@/utils/dates"
 import { round2 } from "@/utils/money"
+import { BUSINESS_TYPES, businessOnboardingSchema, updateBusinessSchema, storePlannerSchema } from "@/utils/validation"
+import { serverT } from "@/lib/i18n/server"
 
 describe("store planner", () => {
   const p = plan({ budget: 150000, businessType: "MINI_MARKET", city: "Casablanca", storeSizeM2: 40, expectedDailyCustomers: 120, employees: 1 })
@@ -24,6 +26,28 @@ describe("store planner", () => {
   })
   it("always carries a disclaimer", () => {
     expect(p.disclaimer).toMatch(/estimation/i)
+  })
+})
+
+describe("coffee shop support", () => {
+  it("accepts coffee shops during onboarding, settings updates and planning", () => {
+    expect(BUSINESS_TYPES).toContain("COFFEE_SHOP")
+    expect(businessOnboardingSchema.shape.businessType.parse("COFFEE_SHOP")).toBe("COFFEE_SHOP")
+    expect(updateBusinessSchema.parse({ type: "COFFEE_SHOP" }).type).toBe("COFFEE_SHOP")
+    expect(storePlannerSchema.shape.businessType.parse("COFFEE_SHOP")).toBe("COFFEE_SHOP")
+  })
+  it("has a coffee-specific equipment and stock profile, not the generic shop fallback", () => {
+    const cafe = plan({ budget: 150000, businessType: "COFFEE_SHOP", city: "Rabat", storeSizeM2: 40, expectedDailyCustomers: 100, employees: 2 })
+    expect(cafe.equipment.some((e) => /espresso/i.test(e.item))).toBe(true)
+    expect(cafe.categories.some((c) => /café/i.test(c.name))).toBe(true)
+    expect(cafe.budgetAllocation.total).toBe(150000)
+    expect(cafe.categories.reduce((sum, c) => sum + c.share, 0)).toBeCloseTo(1)
+    expect(cafe.disclaimer).toMatch(/estimation/i)
+  })
+  it("labels coffee shops in all supported languages", () => {
+    expect(serverT("fr")("onboarding.types.COFFEE_SHOP")).toBe("Café / Coffee shop")
+    expect(serverT("en")("onboarding.types.COFFEE_SHOP")).toBe("Coffee shop / Café")
+    expect(serverT("ar")("onboarding.types.COFFEE_SHOP")).toBe("مقهى")
   })
 })
 

@@ -439,6 +439,10 @@ model Refund {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  // Optional client-supplied idempotency key. When present, a repeated request
+  // with the same key returns the original refund instead of creating a second one.
+  idempotencyKey String?
+
   // Relations
   saleId     String
   sale       Sale     @relation(fields: [saleId], references: [id])
@@ -449,6 +453,7 @@ model Refund {
   userId     String
 
   @@unique([businessId, refundNumber])
+  @@unique([idempotencyKey])
   @@index([saleId])
   @@index([businessId])
   @@index([storeId])
@@ -636,6 +641,10 @@ model CustomerPayment {
   notes     String?
   createdAt DateTime @default(now())
 
+  // Optional client-supplied idempotency key. When present, a repeated request
+  // with the same key returns the original payment instead of creating a second one.
+  idempotencyKey String?
+
   // Relations
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id])
@@ -645,6 +654,7 @@ model CustomerPayment {
   store      Store    @relation(fields: [storeId], references: [id])
   userId     String
 
+  @@unique([idempotencyKey])
   @@index([customerId])
   @@index([businessId])
   @@index([storeId])

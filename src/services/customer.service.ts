@@ -8,6 +8,7 @@ import { hasPermission } from "@/lib/permissions"
 import { round2 } from "@/utils/money"
 import type { PaymentMethod } from "@/utils/validation"
 import { settleCustomerCredit } from "./sales.service"
+import { lockOpenRegister } from "./register-lock"
 
 export const customerService = {
   async list(ctx: TenantContext, q: { search?: string; page: number; pageSize: number }) {
@@ -95,25 +96,64 @@ export const customerService = {
    * Records a repayment of the customer's outstanding balance. Atomically:
    * creates the CustomerPayment, settles open CREDIT sale payments FIFO, decrements the
    * balance, and (for cash) posts a CUSTOMER_PAYMENT transaction to the open register.
+   *
+   * Concurrency/idempotency:
+   * - When `paymentId` is supplied, a repeated request returns the original payment row
+   *   instead of creating a second one. A second request with the same id but a different
+   *   amount is rejected as a conflict.
+   * - The outstanding-balance check runs *inside* the transaction against a freshly locked
+   *   customer row, so two simultaneous repayments cannot both succeed against the same
+   *   balance and cannot drive it below zero.
    */
-  async recordPayment(ctx: TenantContext, customerId: string, input: { amount: number; method: PaymentMethod; reference?: string; notes?: string; storeId?: string }) {
+  async recordPayment(ctx: TenantContext, customerId: string, input: { amount: number; method: PaymentMethod; reference?: string; notes?: string; storeId?: string; paymentId?: string }) {
     const storeId = resolveStoreId(ctx, input.storeId)
     const c = await prisma.customer.findFirst({ where: { id: customerId, businessId: ctx.businessId, deletedAt: null } })
     if (!c) throw notFound("Customer")
-    if (c.outstandingBalance <= 0.009) throw new AppError("NO_OUTSTANDING_BALANCE", "This customer has no outstanding balance")
-    if (input.amount > c.outstandingBalance + 0.009) throw validation(`Amount exceeds the outstanding balance (${c.outstandingBalance.toFixed(2)})`)
-    const register = input.method === "CASH" ? await prisma.cashRegister.findFirst({ where: { businessId: ctx.businessId, storeId, status: "OPEN" } }) : null
-    if (input.method === "CASH" && !register) throw new AppError("REGISTER_CLOSED", "Open a cash register before accepting cash")
+
+    // Idempotency fast-path: a previous request with this paymentId already committed.
+    if (input.paymentId) {
+      const existing = await prisma.customerPayment.findUnique({ where: { idempotencyKey: input.paymentId } })
+      if (existing) {
+        if (Math.abs(existing.amount - input.amount) > 0.009) throw conflict("A different payment with this idempotency key already exists")
+        return { payment: existing, outstandingBalance: round2(c.outstandingBalance), settled: existing.amount }
+      }
+    }
 
     return prisma.$transaction(async (tx) => {
+      // Lock the customer row by updating it in place; concurrent repayments block here.
+      const locked = await tx.customer.updateMany({ where: { id: customerId, businessId: ctx.businessId, deletedAt: null }, data: { updatedAt: new Date() } })
+      if (locked.count !== 1) throw notFound("Customer")
+      const fresh = await tx.customer.findUniqueOrThrow({ where: { id: customerId } })
+      if (fresh.outstandingBalance <= 0.009) throw new AppError("NO_OUTSTANDING_BALANCE", "This customer has no outstanding balance")
+      if (input.amount > fresh.outstandingBalance + 0.009) throw validation(`Amount exceeds the outstanding balance (${fresh.outstandingBalance.toFixed(2)})`)
+
+      // Re-check idempotency inside the transaction to close the race window.
+      if (input.paymentId) {
+        const raced = await tx.customerPayment.findUnique({ where: { idempotencyKey: input.paymentId } })
+        if (raced) {
+          if (Math.abs(raced.amount - input.amount) > 0.009) throw conflict("A different payment with this idempotency key already exists")
+          return { payment: raced, outstandingBalance: round2(fresh.outstandingBalance), settled: raced.amount }
+        }
+      }
+
+      // For cash, serialise against the open register so a concurrent close cannot land first.
+      let registerId: string | null = null
+      if (input.method === "CASH") {
+        const reg = await lockOpenRegister(tx, { businessId: ctx.businessId, storeId })
+        registerId = reg.id
+      }
+
       const payment = await tx.customerPayment.create({
-        data: { amount: input.amount, method: input.method, reference: input.reference, notes: input.notes, customerId, businessId: ctx.businessId, storeId, userId: ctx.userId },
+        data: { id: input.paymentId, idempotencyKey: input.paymentId, amount: input.amount, method: input.method, reference: input.reference, notes: input.notes, customerId, businessId: ctx.businessId, storeId, userId: ctx.userId },
       })
       const settled = await settleCustomerCredit(tx, ctx.businessId, customerId, input.amount)
-      const updated = await tx.customer.update({ where: { id: customerId }, data: { outstandingBalance: { decrement: input.amount } } })
-      if (register) {
+      // Guarded decrement: only applies if the balance still covers the amount.
+      const decremented = await tx.customer.updateMany({ where: { id: customerId, outstandingBalance: { gte: input.amount - 0.009 } }, data: { outstandingBalance: { decrement: input.amount } } })
+      if (decremented.count !== 1) throw conflict("Customer balance changed concurrently; please retry")
+      const updated = await tx.customer.findUniqueOrThrow({ where: { id: customerId } })
+      if (registerId) {
         await tx.cashRegisterTransaction.create({
-          data: { type: "CUSTOMER_PAYMENT", amount: input.amount, reason: `Customer payment: ${c.name}`, cashRegisterId: register.id, businessId: ctx.businessId, storeId, userId: ctx.userId },
+          data: { type: "CUSTOMER_PAYMENT", amount: input.amount, reason: `Customer payment: ${c.name}`, cashRegisterId: registerId, businessId: ctx.businessId, storeId, userId: ctx.userId },
         })
       }
       await writeAuditLog(

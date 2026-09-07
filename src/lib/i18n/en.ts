@@ -13,7 +13,7 @@ const en = {
   },
   onboarding: {
     title: "Let's set up your business", subtitle: "A few details to get started. You can change everything later.", step1: "Your business", step2: "Contact details", step3: "First store", businessName: "Business name", businessType: "Business type", ownerName: "Owner name", taxRate: "Default VAT", currency: "Currency", storeName: "Store name", storeNameHint: "E.g. Maarif Shop, Main store…", finish: "Finish setup",
-    types: { MINI_MARKET: "Mini market", GROCERY: "Grocery", CLOTHING: "Clothing", ELECTRONICS: "Electronics", COSMETICS: "Cosmetics", RESTAURANT: "Restaurant / Snack", PHARMACY: "Parapharmacy", OTHER: "Other" },
+    types: { MINI_MARKET: "Mini market", GROCERY: "Grocery", CLOTHING: "Clothing", ELECTRONICS: "Electronics", COSMETICS: "Cosmetics", RESTAURANT: "Restaurant / Snack", COFFEE_SHOP: "Coffee shop / Café", PHARMACY: "Parapharmacy", OTHER: "Other" },
   },
   dashboard: { title: "Dashboard", revenue: "Revenue", grossProfit: "Gross profit", netProfit: "Net profit", transactions: "Transactions", aov: "Average order", expenses: "Expenses", inventoryValue: "Inventory value (cost)", lowStock: "Low stock", outOfStock: "Out of stock", topProducts: "Top-selling products", salesTrend: "Sales trend", paymentMethods: "Payment methods", recentSales: "Recent sales", lowStockProducts: "Products to reorder", noLowStock: "No low-stock products", noSales: "No sales in this period", grossMargin: "Gross margin", netMargin: "Net margin", cogs: "Cost of goods sold", refunds: "Refunds", profit: "Profit", openRegister: "Open register", goToPos: "Go to POS", registerOpen: "Register open", registerClosed: "Register closed" },
   pos: {

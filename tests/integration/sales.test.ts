@@ -152,6 +152,47 @@ describe("sales: refunds & cancellation", () => {
     await expect(salesService.refund(b.ctx(), sale.id, { items: [{ saleItemId: sale.items[0].id, quantity: 1 }], reason: "x", paymentMethod: "CASH", restock: true })).rejects.toBeInstanceOf(AppError)
   })
 
+  it("two simultaneous refunds of the same line never exceed what was sold", async () => {
+    const p = await createProduct(b, { sellingPrice: 10, stockQuantity: 10 })
+    const { sale } = await salesService.create(b.ctx(), { items: [{ productId: p.id, quantity: 2, discount: 0 }], discountAmount: 0, payments: [{ method: "CARD", amount: 20 }], idempotencyKey: key() })
+    const refund = () => salesService.refund(b.ctx(), sale.id, { items: [{ saleItemId: sale.items[0].id, quantity: 2 }], reason: "race", paymentMethod: "CARD", restock: true })
+    const outcomes = await Promise.allSettled([refund(), refund()])
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1)
+    expect(await prisma.refund.count({ where: { saleId: sale.id } })).toBe(1)
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).stockQuantity).toBe(10)
+  })
+
+  it("a repeated refund request (same refundId) is returned, not duplicated", async () => {
+    const p = await createProduct(b, { sellingPrice: 10, stockQuantity: 10 })
+    const { sale } = await salesService.create(b.ctx(), { items: [{ productId: p.id, quantity: 3, discount: 0 }], discountAmount: 0, payments: [{ method: "CARD", amount: 30 }], idempotencyKey: key() })
+    const refundId = crypto.randomUUID()
+    const input = { refundId, items: [{ saleItemId: sale.items[0].id, quantity: 1 }], reason: "dup", paymentMethod: "CARD" as const, restock: true }
+    const [a, c] = await Promise.all([salesService.refund(b.ctx(), sale.id, input), salesService.refund(b.ctx(), sale.id, input)])
+    expect(a.id).toBe(refundId)
+    expect(c.id).toBe(refundId)
+    expect(await prisma.refund.count({ where: { saleId: sale.id } })).toBe(1)
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).stockQuantity).toBe(8)
+  })
+
+  it("closing the register blocks concurrent cash movements from landing on the closed session", async () => {
+    const b2 = await createBusiness("Close race")
+    const reg = await openRegister(b2, 100)
+    const p = await createProduct(b2, { sellingPrice: 10, stockQuantity: 50 })
+    const sell = () => salesService.create(b2.ctx(), { items: [{ productId: p.id, quantity: 1, discount: 0 }], discountAmount: 0, payments: [{ method: "CASH", amount: 10 }], idempotencyKey: key() })
+    await sell()
+    const outcomes = await Promise.allSettled([registerService.close(b2.ctx(), reg.id, { actualBalance: 110 }), sell(), sell(), sell()])
+    const closed = await prisma.cashRegister.findUniqueOrThrow({ where: { id: reg.id }, include: { transactions: true } })
+    const cashOnRegister = closed.transactions.filter((t) => t.type === "SALE").reduce((a, t) => a + t.amount, 0)
+    if (outcomes[0].status === "fulfilled") {
+      expect(closed.status).toBe("CLOSED")
+      expect(closed.expectedBalance).toBe(100 + cashOnRegister)
+    } else {
+      expect(["CONFLICT", "VALIDATION_ERROR"]).toContain((outcomes[0].reason as { code: string }).code)
+    }
+    const salesAfter = outcomes.slice(1).filter((o) => o.status === "fulfilled").length
+    expect(cashOnRegister).toBe(10 * (1 + salesAfter))
+  })
+
   it("cancel restores stock and reverses cash while register is open", async () => {
     const p = await createProduct(b, { sellingPrice: 10, stockQuantity: 10 })
     const { sale } = await salesService.create(b.ctx(), { items: [{ productId: p.id, quantity: 2, discount: 0 }], discountAmount: 0, payments: [{ method: "CASH", amount: 20 }], idempotencyKey: key() })
