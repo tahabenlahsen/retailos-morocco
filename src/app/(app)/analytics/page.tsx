@@ -1,10 +1,12 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { Info } from "lucide-react"
 import { PageHeader } from "@/components/shared/page-header"
+import { ExportMenu } from "@/components/shared/export-menu"
 import { RequirePermission } from "@/components/shared/require-permission"
 import { DateRangePicker } from "@/components/shared/date-range-picker"
 import { DataTable, type Column } from "@/components/shared/data-table"
@@ -25,6 +27,7 @@ interface InventoryReport { productCount: number; totalUnits: number; costValue:
 interface CustomerReport { anonymous: { count: number; revenue: number }; top: { customer: { id: string; name: string; phone: string | null; loyaltyPoints: number }; orders: number; revenue: number; profit: number }[]; newCustomers: number }
 interface SupplierReport { suppliers: { id: string; name: string; orders: number; received: number; cancelled: number; total: number; balance: number; averageDeliveryDays: number | null; onTimeRate: number | null }[]; totalPurchases: number; totalOutstanding: number }
 interface PaymentReport { total: number; methods: { method: string; amount: number; count: number; share: number }[] }
+interface Receivables { total: number; count: number; debtors: { id: string; name: string; phone: string | null; outstandingBalance: number; creditLimit: number | null }[] }
 
 function Row({ label, value, bold, muted, pct }: { label: string; value: number; bold?: boolean; muted?: boolean; pct?: number }) {
   return <div className={`flex items-center justify-between py-1.5 ${bold ? "font-semibold text-base border-t mt-1 pt-2" : ""} ${muted ? "text-muted-foreground" : ""}`}><span>{label}</span><span className="flex items-center gap-3">{pct != null ? <span className="text-xs text-muted-foreground">{pct.toFixed(1)}%</span> : null}<Money value={value} /></span></div>
@@ -35,6 +38,7 @@ export default function AnalyticsPage() {
   const { filter, setFilter, params, ready } = useDateFilter("thisMonth")
   const { storeId } = useStore()
   const { formatNumber } = useLocale()
+  const router = useRouter()
   const [tab, setTab] = useState("pnl")
   const [groupBy, setGroupBy] = useState("day")
   const base = { ...params, storeId: storeId ?? undefined }
@@ -46,14 +50,15 @@ export default function AnalyticsPage() {
   const cust = useQuery({ queryKey: key("customers"), queryFn: () => api.get<CustomerReport>("/api/analytics/customers", base), enabled: ready && tab === "customers" })
   const sup = useQuery({ queryKey: key("suppliers"), queryFn: () => api.get<SupplierReport>("/api/analytics/suppliers", base), enabled: ready && tab === "suppliers" })
   const pay = useQuery({ queryKey: key("payments"), queryFn: () => api.get<PaymentReport>("/api/analytics/payments", base), enabled: ready && tab === "payments" })
+  const recv = useQuery({ queryKey: ["customers", "receivables"], queryFn: () => api.get<Receivables>("/api/customers/receivables"), enabled: tab === "receivables" })
 
   const catLabel = (c: { name: string; code: string | null }) => (c.code ? t(`expenses.codes.${c.code}`, { defaultValue: c.name }) : c.name)
 
   return (
     <RequirePermission permission="analytics.view">
-      <PageHeader title={t("analytics.title")} actions={<DateRangePicker value={filter} onChange={setFilter} />} />
+      <PageHeader title={t("analytics.title")} actions={<><DateRangePicker value={filter} onChange={setFilter} />{tab !== "suppliers" ? <ExportMenu report={tab} params={{ ...params, storeId: storeId ?? undefined, groupBy: tab === "sales" ? groupBy : undefined }} /> : null}</>} />
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex-wrap h-auto">{["pnl", "sales", "inventory", "customers", "suppliers", "payments"].map((k) => <TabsTrigger key={k} value={k}>{t(`analytics.${k}`)}</TabsTrigger>)}</TabsList>
+        <TabsList className="flex-wrap h-auto">{["pnl", "sales", "inventory", "customers", "suppliers", "payments", "receivables"].map((k) => <TabsTrigger key={k} value={k}>{t(`analytics.${k}`)}</TabsTrigger>)}</TabsList>
 
         <TabsContent value="pnl">
           {pnl.isLoading ? <Skeleton className="h-96" /> : pnl.data ? (
@@ -134,6 +139,15 @@ export default function AnalyticsPage() {
             <div className="grid gap-4 lg:grid-cols-2">
               <Card><CardHeader><CardTitle>{t("analytics.payments")}</CardTitle><CardDescription><Money value={pay.data.total} /></CardDescription></CardHeader><CardContent>{pay.data.methods.length ? <PaymentMethodsChart data={pay.data.methods} /> : <EmptyState title={t("dashboard.noSales")} />}</CardContent></Card>
               <DataTable dense columns={[{ key: "m", header: t("pos.paymentMethod"), cell: (r) => t(`pos.methods.${r.method}`) }, { key: "c", header: t("analytics.count"), cell: (r) => r.count, align: "end" }, { key: "a", header: t("common.amount"), cell: (r) => <Money value={r.amount} />, align: "end" }, { key: "s", header: t("analytics.share"), cell: (r) => `${formatNumber(r.share)}%`, align: "end" }] as Column<PaymentReport["methods"][number]>[]} rows={pay.data.methods} rowKey={(r) => r.method} emptyTitle={t("dashboard.noSales")} />
+            </div>
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="receivables">
+          {recv.isLoading ? <Skeleton className="h-96" /> : recv.data ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 grid-cols-2"><Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{t("analytics.debtors")}</p><p className="text-xl font-bold mt-1">{formatNumber(recv.data.count)}</p></CardContent></Card><Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{t("analytics.totalReceivables")}</p><p className="text-xl font-bold mt-1 text-amber-700 dark:text-amber-300"><Money value={recv.data.total} /></p></CardContent></Card></div>
+              <DataTable dense columns={[{ key: "name", header: t("common.name"), cell: (r) => <div><p className="font-medium">{r.name}</p><p className="text-xs text-muted-foreground" dir="ltr">{r.phone}</p></div> }, { key: "limit", header: t("customers.creditLimit"), cell: (r) => (r.creditLimit == null ? "—" : <Money value={r.creditLimit} />), align: "end", hideOnMobile: true }, { key: "bal", header: t("customers.balance"), cell: (r) => <Money value={r.outstandingBalance} className="font-medium text-amber-700 dark:text-amber-300" />, align: "end" }] as Column<Receivables["debtors"][number]>[]} rows={recv.data.debtors} rowKey={(r) => r.id} emptyTitle={t("customers.noCustomers")} onRowClick={(r) => router.push(`/customers/${r.id}`)} />
             </div>
           ) : null}
         </TabsContent>

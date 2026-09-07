@@ -287,7 +287,8 @@ export const analyticsService = {
 
   async paymentMethodReport(ctx: TenantContext, range: DateRange, storeId?: string) {
     const storeIds = scope(ctx, storeId)
-    const rows = await prisma.payment.groupBy({ by: ["method"], where: { businessId: ctx.businessId, storeId: { in: storeIds }, status: "PAID", createdAt: { gte: range.from, lte: range.to }, sale: { status: { in: SALE_OK } } }, _sum: { amount: true }, _count: true })
+    // PENDING = credit lines not yet repaid; they are still how the sale was paid for (excluded: REFUNDED from cancelled sales)
+    const rows = await prisma.payment.groupBy({ by: ["method"], where: { businessId: ctx.businessId, storeId: { in: storeIds }, status: { in: ["PAID", "PENDING"] }, createdAt: { gte: range.from, lte: range.to }, sale: { status: { in: SALE_OK } } }, _sum: { amount: true }, _count: true })
     const total = round2(rows.reduce((a, r) => a + (r._sum.amount ?? 0), 0))
     return { range, total, methods: rows.map((r) => ({ method: r.method, amount: round2(r._sum.amount ?? 0), count: r._count, share: percent(r._sum.amount ?? 0, total) })).sort((a, b) => b.amount - a.amount) }
   },

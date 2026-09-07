@@ -53,3 +53,6 @@ next-env.d.ts
 
 # side-by-side production builds
 /.next-build/
+
+# local export snapshots
+/tmp-exports/

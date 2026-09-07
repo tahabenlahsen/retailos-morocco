@@ -41,6 +41,12 @@ const nextConfig: NextConfig = {
   distDir: process.env.BUILD_DIST_DIR || ".next",
   allowedDevOrigins: ["127.0.0.1", "localhost"],
   output: process.env.DOCKER_BUILD === "true" ? "standalone" : undefined,
+  // pdfkit reads its AFM font metrics via fs at runtime; keep it external and trace its data + our bundled fonts.
+  serverExternalPackages: ["pdfkit"],
+  outputFileTracingIncludes: {
+    "/api/exports/*": ["./node_modules/pdfkit/js/data/**/*", "./src/assets/fonts/**/*"],
+    "/api/sales/*/receipt": ["./node_modules/pdfkit/js/data/**/*", "./src/assets/fonts/**/*"],
+  },
   images: { remotePatterns: [{ protocol: "https", hostname: "**" }] },
   async headers() {
     return [

@@ -6,8 +6,9 @@ import { useParams } from "next/navigation"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { ArrowLeft, Printer, RotateCcw, Ban } from "lucide-react"
+import { ArrowLeft, Printer, RotateCcw, Ban, FileDown } from "lucide-react"
 import { PageHeader } from "@/components/shared/page-header"
+import { downloadFile } from "@/components/shared/export-menu"
 import { RequirePermission } from "@/components/shared/require-permission"
 import { Money } from "@/components/shared/money"
 import { FormField } from "@/components/shared/form-field"
@@ -41,6 +42,7 @@ export default function SaleDetailPage() {
   const [reason, setReason] = useState("")
   const [method, setMethod] = useState<SalePaymentMethod>("CASH")
   const [restock, setRestock] = useState(true)
+  const [pdfBusy, setPdfBusy] = useState(false)
 
   const q = useQuery({ queryKey: ["sale", id], queryFn: () => api.get<Sale>(`/api/sales/${id}`) })
   const sale = q.data
@@ -77,6 +79,7 @@ export default function SaleDetailPage() {
         actions={<>
           <Button variant="ghost" asChild><Link href="/sales"><ArrowLeft className="h-4 w-4 rtl:rotate-180" />{t("common.back")}</Link></Button>
           <Button variant="outline" onClick={printReceipt}><Printer className="h-4 w-4" />{t("common.print")}</Button>
+          <Button variant="outline" loading={pdfBusy} onClick={() => { setPdfBusy(true); downloadFile(`/api/sales/${id}/receipt?download=1`, `${sale?.saleNumber ?? "receipt"}.pdf`).catch(showError).finally(() => setPdfBusy(false)) }}><FileDown className="h-4 w-4" />PDF</Button>
           {canRefund ? <Button variant="outline" onClick={openRefund}><RotateCcw className="h-4 w-4" />{t("sales.refund")}</Button> : null}
           {canCancel ? <Button variant="destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" />{t("sales.cancel")}</Button> : null}
         </>}
