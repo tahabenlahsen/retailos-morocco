@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react"
-import { LayoutDashboard, ShoppingCart, Package, Boxes, Receipt, Truck, Factory, Users, Wallet, BarChart3, Sparkles, UserCog, Store, Settings, Banknote, Compass } from "lucide-react"
+import { LayoutDashboard, ShoppingCart, Package, Boxes, Receipt, Truck, Factory, Users, Wallet, BarChart3, Sparkles, UserCog, Store, Settings, Banknote, Compass, QrCode } from "lucide-react"
 import type { Permission } from "@/lib/permissions"
 
 export interface NavItem {
@@ -18,6 +18,7 @@ export const NAV: NavItem[] = [
   { key: "sales", href: "/sales", icon: Receipt, permission: "sale.view", mobile: true },
   { key: "products", href: "/products", icon: Package, permission: "product.view", mobile: true },
   { key: "inventory", href: "/inventory", icon: Boxes, permission: "inventory.view" },
+  { key: "barcode-labels", href: "/barcode-labels", icon: QrCode, permission: "product.view" },
   { key: "purchases", href: "/purchases", icon: Truck, permission: "purchase.view" },
   { key: "suppliers", href: "/suppliers", icon: Factory, permission: "supplier.view" },
   { key: "customers", href: "/customers", icon: Users, permission: "customer.view" },

@@ -85,3 +85,27 @@ export function Receipt({ sale }: { sale: ReceiptSale }) {
 export function printReceipt() {
   window.print()
 }
+
+/**
+ * Build a plain-text receipt summary for WhatsApp sharing.
+ * Returns the wa.me URL with the customer's phone and a pre-filled message.
+ */
+export function buildWhatsAppUrl(sale: ReceiptSale, formatMoney: (n: number) => string, formatDate: (iso: string) => string, businessName: string): string {
+  const lines: string[] = [
+    `*${businessName}*`,
+    `${sale.saleNumber} · ${formatDate(sale.createdAt)}`,
+    "",
+    sale.items.map((it) => `• ${it.product.name} ×${it.quantity} = ${formatMoney(it.total)}`).join("\n"),
+    "",
+    `Total: ${formatMoney(sale.total)}`,
+    sale.payments.map((p) => `${p.method}: ${formatMoney(p.amount)}`).join("\n"),
+    "",
+    "Merci de votre visite !",
+  ].filter(Boolean)
+  const message = encodeURIComponent(lines.join("\n"))
+  // Clean the phone number: remove spaces, dashes, parentheses; ensure it starts with country code
+  let phone = (sale.customer?.phone ?? "").replace(/[\s\-()]/g, "")
+  // Moroccan numbers: convert 06/07XXXXXXXX to 2126/2127XXXXXXXX
+  if (phone.startsWith("0")) phone = "212" + phone.slice(1)
+  return `https://wa.me/${phone}?text=${message}`
+}

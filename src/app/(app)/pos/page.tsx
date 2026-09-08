@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { Banknote, PauseCircle, Printer, Plus, Trash2, Lock } from "lucide-react"
+import { Banknote, PauseCircle, Printer, Plus, Trash2, Lock, MessageCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/misc"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -16,7 +16,7 @@ import { ProductSearch } from "@/components/pos/product-search"
 import { CartPanel } from "@/components/pos/cart-panel"
 import { PaymentDialog, type PaymentLine } from "@/components/pos/payment-dialog"
 import { CustomerPicker } from "@/components/pos/customer-picker"
-import { Receipt, printReceipt, type ReceiptSale } from "@/components/pos/receipt"
+import { Receipt, printReceipt, buildWhatsAppUrl, type ReceiptSale } from "@/components/pos/receipt"
 import { useThermalPrinter } from "@/hooks/use-thermal-printer"
 import { useCart, cartToItems, type PosProduct, type CartState } from "@/components/pos/cart-store"
 import { useMe } from "@/hooks/use-me"
@@ -74,7 +74,7 @@ export default function PosPage() {
   const { t } = useTranslation()
   const { me, can } = useMe()
   const { effectiveStoreId, stores, storeId, setStoreId } = useStore()
-  const { formatDateTime } = useLocale()
+  const { formatDateTime, formatMoney } = useLocale()
   const { showError, messageFor } = useApiError()
   const qc = useQueryClient()
   const cart = useCart()
@@ -293,6 +293,7 @@ export default function PosPage() {
           <DialogFooter className="no-print">
             <Button variant="outline" onClick={printReceipt}><Printer className="h-4 w-4" />{t("pos.printReceipt")}</Button>
             {receipt ? <Button variant="outline" onClick={() => thermalPrinter.print(receipt.id)} loading={thermalPrinter.printing || thermalPrinter.connecting}><Printer className="h-4 w-4" />{t("pos.printThermal")}</Button> : null}
+            {receipt && receipt.customer?.phone ? <Button variant="outline" onClick={() => window.open(buildWhatsAppUrl({ ...receipt, cashierName: me ? `${me.user.firstName} ${me.user.lastName}` : null }, formatMoney, formatDateTime, me?.business.name ?? ""), "_blank", "noopener,noreferrer")}><MessageCircle className="h-4 w-4" />{t("pos.sendWhatsapp")}</Button> : null}
             <Button onClick={() => setReceipt(null)}><Plus className="h-4 w-4" />{t("pos.newSale")}</Button>
           </DialogFooter>
         </DialogContent>

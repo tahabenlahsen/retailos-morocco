@@ -7,6 +7,7 @@ const PROTECTED_PREFIXES = [
   "/pos",
   "/products",
   "/inventory",
+  "/barcode-labels",
   "/sales",
   "/purchases",
   "/suppliers",
