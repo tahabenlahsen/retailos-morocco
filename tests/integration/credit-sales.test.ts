@@ -209,6 +209,21 @@ describe("credit ('crédit') sales", () => {
     expect(after.outstandingBalance).toBeGreaterThanOrEqual(0)
   })
 
+  it("redeems loyalty points safely (1 pt = 1 MAD) and refuses to go negative", async () => {
+    // Give the demo customer 100 loyalty points
+    await prisma.customer.update({ where: { id: b.customerId }, data: { loyaltyPoints: 100 } })
+    const r1 = await customerService.redeemLoyaltyPoints(b.ctx(), b.customerId, { points: 30 })
+    expect(r1.redeemed).toBe(30)
+    expect(r1.remainingPoints).toBe(70)
+    // Redeeming more than remaining fails
+    await expect(customerService.redeemLoyaltyPoints(b.ctx(), b.customerId, { points: 80 })).rejects.toMatchObject({ code: "VALIDATION_ERROR" })
+    // Two simultaneous redemptions of 50 points each: only one succeeds (70 available)
+    const attempts = await Promise.allSettled([customerService.redeemLoyaltyPoints(b.ctx(), b.customerId, { points: 50 }), customerService.redeemLoyaltyPoints(b.ctx(), b.customerId, { points: 50 })])
+    expect(attempts.filter((a) => a.status === "fulfilled")).toHaveLength(1)
+    const after = await prisma.customer.findUniqueOrThrow({ where: { id: b.customerId } })
+    expect(after.loyaltyPoints).toBe(20)
+  })
+
   it("is tenant-isolated: another business cannot record payments or read receivables of this customer", async () => {
     const other = await createBusiness("Other")
     await expect(customerService.recordPayment(other.ctx(), b.customerId, { amount: 10, method: "BANK_TRANSFER" })).rejects.toMatchObject({ code: "NOT_FOUND" })

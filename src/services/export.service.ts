@@ -17,7 +17,7 @@ import { customerService } from "./customer.service"
 export const EXPORT_REPORTS = ["pnl", "sales", "inventory", "customers", "top-products", "payments", "receivables"] as const
 export type ExportReport = (typeof EXPORT_REPORTS)[number]
 
-async function businessMeta(businessId: string) {
+export async function businessMeta(businessId: string) {
   const b = await prisma.business.findUniqueOrThrow({ where: { id: businessId }, select: { name: true, address: true, city: true, phone: true } })
   return { name: b.name, address: [b.address, b.city].filter(Boolean).join(", "), phone: b.phone }
 }

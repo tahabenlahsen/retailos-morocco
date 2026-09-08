@@ -226,6 +226,7 @@ const fr = {
     saleComplete: "Vente enregistrée",
     receipt: "Ticket",
     printReceipt: "Imprimer le ticket",
+    printThermal: "Imprimante thermique",
     newSale: "Nouvelle vente",
     orderDiscount: "Remise globale",
     lineDiscount: "Remise ligne",

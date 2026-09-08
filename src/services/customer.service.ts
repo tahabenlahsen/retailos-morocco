@@ -173,4 +173,30 @@ export const customerService = {
     })
     return { total: round2(debtors.reduce((a, d) => a + d.outstandingBalance, 0)), count: debtors.length, debtors }
   },
+
+  /**
+   * Redeem loyalty points as store credit. 1 point = 1 MAD.
+   * Returns the redeemed amount and the new points balance.
+   * Concurrency-safe: guarded decrement prevents negative balances.
+   */
+  async redeemLoyaltyPoints(ctx: TenantContext, customerId: string, input: { points: number; storeId?: string }) {
+    const storeId = resolveStoreId(ctx, input.storeId)
+    const c = await prisma.customer.findFirst({ where: { id: customerId, businessId: ctx.businessId, deletedAt: null } })
+    if (!c) throw notFound("Customer")
+    if (input.points > c.loyaltyPoints) throw validation(`Customer only has ${c.loyaltyPoints} loyalty points`)
+
+    const amount = round2(input.points) // 1 point = 1 MAD
+
+    return prisma.$transaction(async (tx) => {
+      // Guarded decrement: only succeeds if the customer still has enough points.
+      const decremented = await tx.customer.updateMany({ where: { id: customerId, loyaltyPoints: { gte: input.points } }, data: { loyaltyPoints: { decrement: input.points } } })
+      if (decremented.count !== 1) throw conflict("Loyalty points changed concurrently; please retry")
+      const updated = await tx.customer.findUniqueOrThrow({ where: { id: customerId }, select: { loyaltyPoints: true, outstandingBalance: true } })
+      await writeAuditLog(
+        { businessId: ctx.businessId, userId: ctx.userId, action: "LOYALTY_REDEEMED", entityType: "Customer", entityId: customerId, metadata: { points: input.points, amount, remainingPoints: updated.loyaltyPoints }, ipAddress: ctx.ip },
+        tx
+      )
+      return { redeemed: amount, pointsUsed: input.points, remainingPoints: updated.loyaltyPoints, storeId }
+    })
+  },
 }

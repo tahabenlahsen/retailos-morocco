@@ -17,6 +17,7 @@ import { CartPanel } from "@/components/pos/cart-panel"
 import { PaymentDialog, type PaymentLine } from "@/components/pos/payment-dialog"
 import { CustomerPicker } from "@/components/pos/customer-picker"
 import { Receipt, printReceipt, type ReceiptSale } from "@/components/pos/receipt"
+import { useThermalPrinter } from "@/hooks/use-thermal-printer"
 import { useCart, cartToItems, type PosProduct, type CartState } from "@/components/pos/cart-store"
 import { useMe } from "@/hooks/use-me"
 import { useStore } from "@/components/providers/store-provider"
@@ -83,6 +84,7 @@ export default function PosPage() {
   const [holdLabel, setHoldLabel] = useState("")
   const [holdPrompt, setHoldPrompt] = useState(false)
   const [receipt, setReceipt] = useState<ReceiptSale | null>(null)
+  const thermalPrinter = useThermalPrinter()
   const idemRef = useRef<string>(crypto.randomUUID())
 
   const posStoreId = storeId ?? effectiveStoreId
@@ -290,6 +292,7 @@ export default function PosPage() {
           {receipt ? <Receipt sale={{ ...receipt, cashierName: me ? `${me.user.firstName} ${me.user.lastName}` : null }} /> : null}
           <DialogFooter className="no-print">
             <Button variant="outline" onClick={printReceipt}><Printer className="h-4 w-4" />{t("pos.printReceipt")}</Button>
+            {receipt ? <Button variant="outline" onClick={() => thermalPrinter.print(receipt.id)} loading={thermalPrinter.printing || thermalPrinter.connecting}><Printer className="h-4 w-4" />{t("pos.printThermal")}</Button> : null}
             <Button onClick={() => setReceipt(null)}><Plus className="h-4 w-4" />{t("pos.newSale")}</Button>
           </DialogFooter>
         </DialogContent>

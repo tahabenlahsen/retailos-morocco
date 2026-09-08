@@ -333,6 +333,12 @@ export const customerPaymentSchema = z.object({
   paymentId: uuid.optional(),
 })
 
+/** Redeem loyalty points for a customer. 1 point = 1 MAD store credit. */
+export const loyaltyRedeemSchema = z.object({
+  points: z.number().int().positive().max(100000),
+  storeId: uuid.optional(),
+})
+
 export const heldCartSchema = z.object({
   storeId: uuid.optional(),
   label: z.string().trim().max(60).optional(),
