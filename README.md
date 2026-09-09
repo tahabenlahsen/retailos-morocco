@@ -38,11 +38,13 @@ Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · Tailwind CSS v4 
 
 ## Quick start (development)
 
+> **New here?** See [`FRIEND_SETUP.md`](FRIEND_SETUP.md) for a 5-minute zero-setup guide.
+
 ```bash
 git clone <repo> retailos-morocco && cd retailos-morocco
 npm install
 cp .env.example .env            # defaults use SQLite: DATABASE_URL="file:./dev.db"
-npm run db:push                 # create the schema
+npm run db:push                 # create the schema (uses SQLite, no install needed)
 npm run db:seed                 # demo data (two isolated businesses)
 npm run dev                     # http://localhost:3000
 ```
